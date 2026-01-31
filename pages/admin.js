@@ -16,6 +16,17 @@ const OWNER_EMAIL = "rkamonasish@gmail.com";
 const ALL_ROLES = ["super_admin", "admin", "moderator", "premium", "user"];
 const MODERATOR_ALLOWED = ["premium", "user"];
 
+function isValidUrl(value) {
+  if (!value) return false;
+  try {
+    // basic URL validation
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null); // current admin's profile (with role)
@@ -24,9 +35,18 @@ export default function AdminPage() {
   const [users, setUsers] = useState([]);
   const [problems, setProblems] = useState([]);
 
-  // UI/form state
+  // UI/form state for create/edit course
   const [courseTitle, setCourseTitle] = useState("");
   const [courseSlug, setCourseSlug] = useState("");
+  // course topics (one-by-one)
+  const [courseTopics, setCourseTopics] = useState([]);
+  const [topicInput, setTopicInput] = useState("");
+  // course meta
+  const [courseDescription, setCourseDescription] = useState("");
+  const [courseType, setCourseType] = useState("Free");
+  const [courseWeeks, setCourseWeeks] = useState("");
+  // editing mode
+  const [editingCourseId, setEditingCourseId] = useState(null);
 
   const [probTitle, setProbTitle] = useState("");
   const [probPlatform, setProbPlatform] = useState("Codeforces");
@@ -36,10 +56,17 @@ export default function AdminPage() {
 
   const [assignUserId, setAssignUserId] = useState("");
 
+  // NEW: solution fields for problem (video + text)
+  const [probVideo, setProbVideo] = useState("");
+  const [probText, setProbText] = useState("");
+
   // set role by email card
   const [roleEmail, setRoleEmail] = useState("");
   const [roleToSet, setRoleToSet] = useState("user");
   const [actionMsg, setActionMsg] = useState(null);
+
+  // editing topics per existing course: { [courseId]: { editing: bool, topics: [], input: "" } }
+  const [editingTopicsMap, setEditingTopicsMap] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -128,48 +155,186 @@ export default function AdminPage() {
       setCourses(cRes.data || []);
       setProblems(pRes.data || []);
       setUsers(uRes.data || []);
+      // reset any editing maps for fresh data
+      setEditingTopicsMap({});
     } catch (err) {
       console.error("loadAll failed", err);
     }
   }
 
-  /* ----------------- Course / Problem / Enrollment actions (unchanged logic mostly) ----------------- */
+  /* ----------------- Course / Problem / Enrollment actions ----------------- */
 
-  async function createCourse(e) {
+  // add a topic to the create-course local list
+  function addTopicLocal(e) {
+    e?.preventDefault?.();
+    const t = (topicInput || "").trim();
+    if (!t) return;
+    if (courseTopics.length >= 10) {
+      setActionMsg({ type: "error", text: "Max 10 topics allowed." });
+      return;
+    }
+    setCourseTopics(prev => [...prev, t]);
+    setTopicInput("");
+    setActionMsg(null);
+  }
+
+  function removeTopicLocal(idx) {
+    setCourseTopics(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function editTopicLocal(idx, newValue) {
+    setCourseTopics(prev => prev.map((v, i) => i === idx ? newValue.trim() : v));
+  }
+
+  // create or update course (single handler)
+  async function createOrUpdateCourse(e) {
     e?.preventDefault();
     if (!courseTitle || !courseSlug) return setActionMsg({ type: "error", text: "Title and slug required" });
 
     try {
-      const { error } = await supabase.from("courses").insert([{ title: courseTitle, slug: courseSlug }]);
-      if (error) throw error;
+      const payload = {
+        title: courseTitle,
+        slug: courseSlug,
+        // include topics array (or null if empty)
+        topics: (courseTopics && courseTopics.length) ? courseTopics.slice(0, 10) : null,
+        description: courseDescription || null,
+        course_type: courseType || null,
+        weeks: courseWeeks ? String(courseWeeks).trim() : null,
+      };
+
+      if (editingCourseId) {
+        const { error } = await supabase.from("courses").update(payload).eq("id", editingCourseId);
+        if (error) throw error;
+        setActionMsg({ type: "success", text: "Course updated" });
+      } else {
+        const { error } = await supabase.from("courses").insert([payload]);
+        if (error) throw error;
+        setActionMsg({ type: "success", text: "Course created" });
+      }
+
+      // reset form
       setCourseTitle(""); setCourseSlug("");
+      setCourseDescription(""); setCourseType("Free"); setCourseWeeks("");
+      setCourseTopics([]); setTopicInput("");
+      setEditingCourseId(null);
+
       await loadAll();
-      setActionMsg({ type: "success", text: "Course created" });
     } catch (err) {
       console.error(err);
-      setActionMsg({ type: "error", text: err.message || "Create course failed" });
+      setActionMsg({ type: "error", text: err.message || "Create/update course failed" });
     }
   }
 
+  async function deleteCourse(courseId) {
+    if (!confirm("Delete this course? This will remove the course row (course_problems and enrollments may remain unless you handle them separately).")) return;
+    try {
+      const { error } = await supabase.from("courses").delete().eq("id", courseId);
+      if (error) throw error;
+      setActionMsg({ type: "success", text: "Course deleted" });
+      // reload lists
+      await loadAll();
+      // if we were editing this course, clear the form
+      if (editingCourseId === courseId) {
+        setEditingCourseId(null);
+        setCourseTitle(""); setCourseSlug(""); setCourseDescription(""); setCourseTopics([]); setTopicInput("");
+      }
+    } catch (err) {
+      console.error(err);
+      setActionMsg({ type: "error", text: err.message || "Delete failed" });
+    }
+  }
+
+  function startEditCourse(course) {
+    setEditingCourseId(course.id);
+    setCourseTitle(course.title || "");
+    setCourseSlug(course.slug || "");
+    setCourseDescription(course.description || "");
+    setCourseType(course.course_type || "Free");
+    setCourseWeeks(course.weeks || "");
+    setCourseTopics(Array.isArray(course.topics) ? [...course.topics] : []);
+    setTopicInput("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEditCourse() {
+    setEditingCourseId(null);
+    setCourseTitle(""); setCourseSlug(""); setCourseDescription(""); setCourseType("Free"); setCourseWeeks("");
+    setCourseTopics([]); setTopicInput("");
+  }
+
+  // addProblem: performs validation + schema-defensive insert
   async function addProblem(e) {
     e?.preventDefault();
+    setActionMsg(null);
+
     if (!probTitle || !probPlatform) return setActionMsg({ type: "error", text: "Title and platform required" });
 
+    // If the user provided a link-like value, ensure it is a valid URL (basic)
+    if (probLink && !isValidUrl(probLink)) {
+      return setActionMsg({ type: "error", text: "Problem link looks invalid. Use a full URL (https://...)" });
+    }
+
+    if (probVideo && !isValidUrl(probVideo) && probVideo.trim() !== "") {
+      // allow empty string or plain text, but if it looks like a link it should be valid
+      return setActionMsg({ type: "error", text: "Video solution looks like a URL but it's invalid. Use full URL (https://...)" });
+    }
+
     try {
+      // Preferred attempt: insert with video_solution and text_solution
+      const payload = {
+        title: probTitle,
+        platform: probPlatform,
+        link: probLink || null,
+        difficulty: probDifficulty,
+        created_by: profile.id,
+        video_solution: probVideo && String(probVideo).trim() ? String(probVideo).trim() : null,
+        text_solution: probText && String(probText).trim() ? String(probText).trim() : null,
+      };
+
+      // Try insert with the preferred columns first
       const { data: newProb, error } = await supabase
         .from("problems")
-        .insert([{
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) {
+        // If insertion failed due to unknown columns (schema mismatch), fallback to older `solution` column
+        console.warn("Preferred insert failed, will try fallback:", error);
+        const fallbackPayload = {
           title: probTitle,
           platform: probPlatform,
           link: probLink || null,
           difficulty: probDifficulty,
-          created_by: profile.id
-        }])
-        .select()
-        .single();
+          created_by: profile.id,
+          solution: probText && String(probText).trim() ? String(probText).trim() : (probVideo && String(probVideo).trim() ? String(probVideo).trim() : null),
+        };
 
-      if (error) throw error;
+        const { data: newProb2, error: err2 } = await supabase
+          .from("problems")
+          .insert([fallbackPayload])
+          .select()
+          .single();
 
+        if (err2) throw err2;
+        // attach to course_problems if applicable
+        if (selectedCourseId) {
+          const { error: cpErr } = await supabase.from("course_problems").insert([{
+            course_id: selectedCourseId,
+            problem_id: newProb2.id
+          }]);
+          if (cpErr) throw cpErr;
+        }
+
+        // success fallback
+        setProbTitle(""); setProbLink(""); setProbDifficulty("easy"); setSelectedCourseId("");
+        setProbVideo(""); setProbText("");
+        await loadAll();
+        setActionMsg({ type: "success", text: "Problem added (fallback to legacy `solution` column)." });
+        return;
+      }
+
+      // success with preferred insert
       if (selectedCourseId) {
         const { error: cpErr } = await supabase.from("course_problems").insert([{
           course_id: selectedCourseId,
@@ -179,6 +344,7 @@ export default function AdminPage() {
       }
 
       setProbTitle(""); setProbLink(""); setProbDifficulty("easy"); setSelectedCourseId("");
+      setProbVideo(""); setProbText("");
       await loadAll();
       setActionMsg({ type: "success", text: "Problem added" });
     } catch (err) {
@@ -327,6 +493,94 @@ export default function AdminPage() {
     }
   }
 
+  /* ------------- Editing topics for existing courses ------------- */
+
+  function startEditTopics(course) {
+    setEditingTopicsMap(prev => ({
+      ...prev,
+      [course.id]: {
+        editing: true,
+        topics: Array.isArray(course.topics) ? [...course.topics] : [],
+        input: ""
+      }
+    }));
+  }
+
+  function cancelEditTopics(courseId) {
+    setEditingTopicsMap(prev => {
+      const copy = { ...prev };
+      delete copy[courseId];
+      return copy;
+    });
+  }
+
+  function editTopicsAdd(courseId) {
+    setEditingTopicsMap(prev => {
+      const item = prev[courseId];
+      if (!item) return prev;
+      const val = (item.input || "").trim();
+      if (!val) return prev;
+      if ((item.topics || []).length >= 10) {
+        setActionMsg({ type: "error", text: "Max 10 topics allowed per course." });
+        return prev;
+      }
+      return {
+        ...prev,
+        [courseId]: {
+          ...item,
+          topics: [...(item.topics || []), val],
+          input: ""
+        }
+      };
+    });
+  }
+
+  function editTopicsRemove(courseId, idx) {
+    setEditingTopicsMap(prev => {
+      const item = prev[courseId];
+      if (!item) return prev;
+      return {
+        ...prev,
+        [courseId]: {
+          ...item,
+          topics: item.topics.filter((_, i) => i !== idx)
+        }
+      };
+    });
+  }
+
+  function editTopicsUpdateValue(courseId, idx, newVal) {
+    setEditingTopicsMap(prev => {
+      const item = prev[courseId];
+      if (!item) return prev;
+      const newTopics = item.topics.map((t, i) => i === idx ? newVal.trim() : t);
+      return {
+        ...prev,
+        [courseId]: {
+          ...item,
+          topics: newTopics
+        }
+      };
+    });
+  }
+
+  async function saveEditedTopics(courseId) {
+    const item = editingTopicsMap[courseId];
+    if (!item) return;
+    try {
+      const topicsToSave = (item.topics || []).slice(0, 10);
+      const { error } = await supabase.from("courses").update({ topics: topicsToSave }).eq("id", courseId);
+      if (error) throw error;
+      setActionMsg({ type: "success", text: "Topics updated" });
+      await loadAll();
+    } catch (err) {
+      console.error(err);
+      setActionMsg({ type: "error", text: err.message || "Save topics failed" });
+    } finally {
+      cancelEditTopics(courseId);
+    }
+  }
+
   if (loading) return <div className="p-6">Loading admin panel…</div>;
 
   // render
@@ -368,12 +622,69 @@ export default function AdminPage() {
           <section className="grid md:grid-cols-2 gap-6 mb-6">
 
             <div className="card p-4 hover-card">
-              <h3 className="card-title">Create Course</h3>
-              <form onSubmit={createCourse} className="space-y-3">
+              <h3 className="card-title">{editingCourseId ? "Edit Course" : "Create Course"}</h3>
+              <form onSubmit={createOrUpdateCourse} className="space-y-3">
                 <input value={courseTitle} onChange={e => setCourseTitle(e.target.value)} placeholder="Course title" className="w-full p-2 field" />
                 <input value={courseSlug} onChange={e => setCourseSlug(e.target.value)} placeholder="slug (e.g. cp-foundations)" className="w-full p-2 field" />
+
+                {/* Topics input - one by one */}
+                <div>
+                  <label style={{ display: "block", marginBottom: 6, color: "var(--muted-2)" }}>Topics (add one-by-one, max 10)</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      value={topicInput}
+                      onChange={e => setTopicInput(e.target.value)}
+                      placeholder="Topic name (e.g. Graphs)"
+                      className="w-full p-2 field"
+                    />
+                    <button className="btn btn-cyan" type="button" onClick={addTopicLocal}>Add</button>
+                  </div>
+
+                  {courseTopics.length > 0 && (
+                    <ul style={{ marginTop: 8, paddingLeft: 18 }}>
+                      {courseTopics.map((t, i) => (
+                        <li key={i} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, color: "var(--muted-2)" }}>{t}</span>
+                          <button type="button" className="btn" onClick={() => {
+                            // quick inline edit using prompt to keep UI simple
+                            const newVal = prompt("Edit topic", t);
+                            if (newVal === null) return;
+                            if (!newVal.trim()) {
+                              // if empty -> remove
+                              if (!confirm("Remove this topic?")) return;
+                              removeTopicLocal(i);
+                            } else {
+                              editTopicLocal(i, newVal);
+                            }
+                          }}>Edit</button>
+                          <button type="button" className="btn" onClick={() => { if (confirm("Delete topic?")) removeTopicLocal(i); }}>Delete</button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {/* description (optional) */}
+                <textarea
+                  value={courseDescription}
+                  onChange={(e) => setCourseDescription(e.target.value)}
+                  placeholder="Short description (optional)"
+                  className="w-full p-2 field"
+                  rows={2}
+                />
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <select value={courseType} onChange={(e) => setCourseType(e.target.value)} className="w-1/2 p-2 field">
+                    <option value="Free">Free</option>
+                    <option value="Premium">Premium</option>
+                    <option value="Paid">Paid</option>
+                  </select>
+                  <input value={courseWeeks} onChange={(e) => setCourseWeeks(e.target.value)} placeholder="Weeks (optional)" className="w-1/2 p-2 field" />
+                </div>
+
                 <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                  <button className="btn btn-cyan" type="submit">Create Course</button>
+                  <button className="btn btn-cyan" type="submit">{editingCourseId ? "Save changes" : "Create Course"}</button>
+                  {editingCourseId && <button type="button" className="btn" onClick={cancelEditCourse}>Cancel</button>}
                 </div>
               </form>
             </div>
@@ -383,7 +694,27 @@ export default function AdminPage() {
               <form onSubmit={addProblem} className="space-y-3">
                 <input value={probTitle} onChange={e => setProbTitle(e.target.value)} placeholder="Problem title" className="w-full p-2 field" />
                 <input value={probPlatform} onChange={e => setProbPlatform(e.target.value)} placeholder="Platform (Codeforces / SeriousOJ)" className="w-full p-2 field" />
-                <input value={probLink} onChange={e => setProbLink(e.target.value)} placeholder="Link (optional)" className="w-full p-2 field" />
+                <input value={probLink} onChange={e => setProbLink(e.target.value)} placeholder="Link (optional) — any site" className="w-full p-2 field" />
+
+                {/* Solution inputs: video + text */}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={probVideo}
+                    onChange={e => setProbVideo(e.target.value)}
+                    placeholder="Video solution (any link or text)"
+                    className="w-1/2 p-2 field"
+                  />
+                  <div style={{ alignSelf: "center", color: "var(--muted-2)", fontSize: 12 }}>🎥</div>
+                </div>
+
+                <textarea
+                  value={probText}
+                  onChange={e => setProbText(e.target.value)}
+                  placeholder="Text solution (paste explanation or a link) - optional"
+                  className="w-full p-2 field"
+                  rows={4}
+                />
+
                 <select value={probDifficulty} onChange={e => setProbDifficulty(e.target.value)} className="w-full p-2 field">
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
@@ -447,6 +778,90 @@ export default function AdminPage() {
                 <div>Profiles: <strong style={{ color: "white" }}>{users.length}</strong></div>
                 <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted-2)" }}>Logged in as <strong style={{ color: "white" }}>{profile.display_name || profile.username}</strong> ({profile.role})</div>
               </div>
+            </div>
+          </section>
+
+          {/* COURSES (with full edit/delete) */}
+          <section className="mb-6">
+            <h3 className="centered-h">Courses</h3>
+            <div className="space-y-3">
+              {courses.map(c => {
+                const editing = editingTopicsMap[c.id]?.editing;
+                const editor = editingTopicsMap[c.id] || { topics: Array.isArray(c.topics) ? [...c.topics] : [], input: "" };
+                return (
+                  <div key={c.id} className="card p-3" style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 260 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 700, color: 'white' }}>{c.title}</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted-2)' }}>{c.slug}</div>
+                      </div>
+
+                      <div style={{ marginTop: 8, color: 'var(--muted-2)' }}>{c.description || "No description"}</div>
+                      <div style={{ marginTop: 8 }}>
+                        <strong style={{ color: 'white', fontSize: 12 }}>Meta:</strong>
+                        <span style={{ marginLeft: 8, color: 'var(--muted-2)', fontSize: 12 }}>{c.course_type || 'Free'}</span>
+                        <span style={{ marginLeft: 12, color: 'var(--muted-2)', fontSize: 12 }}>{c.weeks ? `${c.weeks} wk(s)` : ''}</span>
+                      </div>
+
+                      {/* topics display or editor */}
+                      {!editing ? (
+                        <>
+                          {Array.isArray(c.topics) && c.topics.length > 0 ? (
+                            <ul style={{ marginTop: 8, paddingLeft: 18 }}>
+                              {c.topics.map((t, i) => <li key={i} style={{ color: 'var(--muted-2)', marginBottom: 4 }}>{t}</li>)}
+                            </ul>
+                          ) : (
+                            <div style={{ marginTop: 8, color: 'var(--muted-2)' }}>No topics yet.</div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ marginBottom: 6, color: 'var(--muted-2)' }}>Edit topics (max 10)</div>
+                          <ul style={{ paddingLeft: 18 }}>
+                            {editor.topics.map((t, i) => (
+                              <li key={i} style={{ marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <input
+                                  value={t}
+                                  onChange={(e) => editTopicsUpdateValue(c.id, i, e.target.value)}
+                                  className="p-2 field"
+                                  style={{ flex: 1, minWidth: 150 }}
+                                />
+                                <button className="btn" onClick={() => editTopicsRemove(c.id, i)} type="button">Delete</button>
+                              </li>
+                            ))}
+                          </ul>
+
+                          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                            <input
+                              value={editor.input}
+                              onChange={(e) => setEditingTopicsMap(prev => ({ ...prev, [c.id]: { ...(prev[c.id] || {}), input: e.target.value }}))}
+                              placeholder="New topic"
+                              className="p-2 field"
+                              style={{ flex: 1 }}
+                            />
+                            <button className="btn btn-cyan" onClick={() => editTopicsAdd(c.id)} type="button">Add</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {!editing ? (
+                        <>
+                          <button className="btn btn-cyan" onClick={() => startEditTopics(c)} type="button">Edit topics</button>
+                          <button className="btn" onClick={() => startEditCourse(c)} type="button">Edit course</button>
+                          <button className="btn" onClick={() => deleteCourse(c.id)} type="button">Delete course</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn btn-cyan" onClick={() => saveEditedTopics(c.id)} type="button">Save topics</button>
+                          <button className="btn" onClick={() => cancelEditTopics(c.id)} type="button">Cancel</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
 

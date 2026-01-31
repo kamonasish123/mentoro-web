@@ -334,12 +334,49 @@ export default function AboutPage() {
 
                   {s.id === 'competitive' && (
                     <div className="comp-list">
-                      {PROFILE.competitive.map((c) => (
-                        <div key={c.title} className="comp-item">
-                          <div className="comp-title">{c.title}</div>
-                          <div className="comp-note muted">{c.note}</div>
+                      {/* New compact table view with handle links and a "View (100+)" button (no link for now) */}
+                      <div className="comp-table">
+                        <div className="comp-row comp-header">
+                          <div className="col-judge">Online Judge</div>
+                          <div className="col-handle">Handle</div>
+                          <div className="col-rating">Rating</div>
+                          <div className="col-solved">Solved</div>
                         </div>
-                      ))}
+
+                        <div className="comp-row">
+                          <div className="col-judge">Codeforces</div>
+                          <div className="col-handle">
+                            <a className="handle-btn btn btn-outline" href="https://codeforces.com/profile/Bullet" target="_blank" rel="noopener noreferrer">Bullet</a>
+                          </div>
+                          <div className="col-rating">1475</div>
+                          <div className="col-solved">2000+</div>
+                        </div>
+
+                        <div className="comp-row">
+                          <div className="col-judge">CodeChef</div>
+                          <div className="col-handle">
+                            <a className="handle-btn btn btn-outline" href="https://www.codechef.com/users/kamonasish123" target="_blank" rel="noopener noreferrer">kamonasish123</a>
+                          </div>
+                          <div className="col-rating">1901</div>
+                          <div className="col-solved">500+</div>
+                        </div>
+
+                        <div className="comp-row">
+                          <div className="col-judge">LeetCode</div>
+                          <div className="col-handle">
+                            <a className="handle-btn btn btn-outline" href="https://leetcode.com/u/I_LOVE_SWEETY" target="_blank" rel="noopener noreferrer">kamonasish</a>
+                          </div>
+                          <div className="col-rating">1800</div>
+                          <div className="col-solved">500+</div>
+                        </div>
+
+                        <div className="comp-footer">
+                          <div className="authored-text">My authored problems on different judges.</div>
+                          <div className="authored-cta">
+                            <button className="btn btn-outline" disabled>View (100+)</button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -466,6 +503,18 @@ export default function AboutPage() {
         .comp-title { font-weight:700; color:#e6f7ff; }
         .comp-note { color: var(--muted); font-size:13px; }
 
+        /* Competitive table styles */
+        .comp-table { display:flex; flex-direction:column; gap:8px; }
+        .comp-row { display:grid; grid-template-columns: 1fr 1fr 96px 96px; gap:12px; align-items:center; padding:8px; border-radius:8px; }
+        .comp-header { font-weight:800; color: var(--accent); opacity:0.95; }
+        .col-judge { font-weight:700; }
+        .col-handle { }
+        .col-rating, .col-solved { color: var(--muted); font-size:13px; }
+        .handle-btn { text-decoration:none; display:inline-block; }
+        .comp-footer { display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px dashed rgba(255,255,255,0.02); margin-top:6px; }
+        .authored-text { color: var(--muted); font-size:13px; }
+        .authored-cta { }
+
         .education-list { display:flex; flex-direction:column; gap:12px; }
         .edu-card { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px; border-radius:10px; background: rgba(255,255,255,0.01); }
         .edu-school { font-weight:700; color:#e6f7ff; }
@@ -487,6 +536,7 @@ export default function AboutPage() {
           .right-col { order: 2; }
           .mini-toc { display:flex; gap:6px; overflow:auto; padding:6px 0; }
           .toc-item { min-width: 140px; flex: 0 0 auto; }
+          .comp-row { grid-template-columns: 1fr 1fr 84px 84px; }
         }
       `}</style>
     </>

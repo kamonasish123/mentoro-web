@@ -73,6 +73,22 @@ function IconInstagram({ className = 'w-5 h-5' }) {
   )
 }
 
+/* ---------- Helper: extract topics defensively ---------- */
+function parseTopicsFromRow(row) {
+  if (!row) return [];
+  if (Array.isArray(row.topics) && row.topics.length) {
+    return row.topics.slice(0, 10).map(String);
+  }
+  const textCandidates = [row.topics_text, row.topics_str, row.topicsList, row.topics_list, row.topicsText];
+  for (const t of textCandidates) {
+    if (typeof t === 'string' && t.trim()) {
+      const parts = t.split(/\r?\n|[,;]+/).map(s => s.trim()).filter(Boolean);
+      return parts.slice(0, 10);
+    }
+  }
+  return [];
+}
+
 export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [checkingAdmin, setCheckingAdmin] = useState(true);
@@ -96,6 +112,19 @@ export default function Home() {
   const [loadingCpCourse, setLoadingCpCourse] = useState(true);
   const [userEnrolledOnHome, setUserEnrolledOnHome] = useState(false);
   const [enrollActionLoading, setEnrollActionLoading] = useState(false);
+
+  // list of all courses to show on homepage (with counts & whether user enrolled)
+  const [coursesList, setCoursesList] = useState([]);
+  const [loadingCoursesList, setLoadingCoursesList] = useState(true);
+
+  // Topic filtering & selection state
+  const [uniqueTopics, setUniqueTopics] = useState([]); // ordered list of unique topics for filter chips
+  const [selectedTopics, setSelectedTopics] = useState([]); // topics currently selected (order preserved)
+  const [topicPickerValue, setTopicPickerValue] = useState(""); // select value for adding a topic
+  const [showTopicControls, setShowTopicControls] = useState(false); // checkbox controls visibility
+
+  // show limited cards on homepage
+  const [showAllCourses, setShowAllCourses] = useState(false);
 
   // load session + profile
   useEffect(() => {
@@ -179,7 +208,6 @@ export default function Home() {
     (async () => {
       setLoadingCpCourse(true);
       try {
-        // 1) course row
         const { data: courses } = await supabase
           .from("courses")
           .select("id, slug, title, description")
@@ -195,19 +223,16 @@ export default function Home() {
           return;
         }
 
-        // 2) problem count for course
         const { count: problemCount } = await supabase
           .from("course_problems")
           .select("id", { count: "exact", head: false })
           .eq("course_id", c.id);
 
-        // 3) enrolled count
         const { count: enrolledCount } = await supabase
           .from("enrollments")
           .select("id", { count: "exact", head: false })
           .eq("course_id", c.id);
 
-        // 4) whether current user is enrolled
         const { data: userData } = await supabase.auth.getUser();
         const u = userData?.user ?? null;
         let userEnrolled = false;
@@ -244,7 +269,112 @@ export default function Home() {
     return () => { mounted = false };
   }, []);
 
-  // enroll directly from homepage (simple UX)
+  // fetch all courses to display on homepage (so newly created courses show up on homepage)
+  // then fetch per-course counts and whether current user is enrolled (so UI is accurate)
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoadingCoursesList(true);
+      try {
+        // fetch base course rows
+        const { data: baseCourses, error: baseErr } = await supabase
+          .from("courses")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (baseErr) {
+          console.warn("failed to fetch courses list:", baseErr);
+          if (mounted) setCoursesList([]);
+          return;
+        }
+        const courses = baseCourses || [];
+
+        // get current user id (if any)
+        const { data: userData } = await supabase.auth.getUser();
+        const u = userData?.user ?? null;
+        const uid = u?.id ?? null;
+
+        // for each course, fetch counts and whether current user enrolled.
+        const enhanced = await Promise.all(courses.map(async (c) => {
+          try {
+            const [{ count: problemCount }, { count: enrolledCount }] = await Promise.all([
+              supabase.from("course_problems").select("id", { count: "exact", head: false }).eq("course_id", c.id),
+              supabase.from("enrollments").select("id", { count: "exact", head: false }).eq("course_id", c.id),
+            ]);
+
+            let userEnrolled = false;
+            if (uid) {
+              const { data: own } = await supabase
+                .from("enrollments")
+                .select("id")
+                .eq("course_id", c.id)
+                .eq("user_id", uid)
+                .limit(1);
+              userEnrolled = (own || []).length > 0;
+            }
+
+            return {
+              ...c,
+              problemCount: typeof problemCount === "number" ? problemCount : 0,
+              enrolledCount: typeof enrolledCount === "number" ? enrolledCount : 0,
+              userEnrolled,
+            };
+          } catch (err) {
+            // if a per-course fetch fails, fallback to zeros but keep the row
+            console.warn("failed to fetch counts for course", c.id, err);
+            return {
+              ...c,
+              problemCount: 0,
+              enrolledCount: 0,
+              userEnrolled: false,
+            };
+          }
+        }));
+
+        if (mounted) setCoursesList(enhanced);
+      } catch (err) {
+        console.error("unexpected error fetching courses list", err);
+        if (mounted) setCoursesList([]);
+      } finally {
+        if (mounted) setLoadingCoursesList(false);
+      }
+    })();
+    return () => { mounted = false };
+  }, []);
+
+  // derive uniqueTopics when coursesList changes
+  useEffect(() => {
+    const map = new Map();
+    (coursesList || []).forEach(c => {
+      const t = parseTopicsFromRow(c);
+      t.forEach((topic) => {
+        const key = String(topic).trim();
+        if (!key) return;
+        if (!map.has(key)) map.set(key, { topic: key, count: 0 });
+        map.get(key).count++;
+      });
+    });
+    // order by frequency desc then by first-encounter order (Map insertion)
+    const arr = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    const topicsOnly = arr.map(x => x.topic);
+    setUniqueTopics(topicsOnly);
+    // prune selectedTopics that are no longer available
+    setSelectedTopics(prev => prev.filter(t => topicsOnly.includes(t)));
+  }, [coursesList]);
+
+  // when the picker value changes, add it automatically (auto-apply), then clear picker
+  useEffect(() => {
+    if (!topicPickerValue) return;
+    const t = topicPickerValue.trim();
+    if (!t) return;
+    setSelectedTopics(prev => {
+      if (prev.includes(t)) return prev;
+      return [...prev, t];
+    });
+    setTopicPickerValue("");
+  }, [topicPickerValue]);
+
+  // enroll directly from homepage (simple UX for CP Foundations)
   async function handleHomeEnroll() {
     if (!cpCourse?.id) return alert("Course not loaded");
     setEnrollActionLoading(true);
@@ -253,7 +383,9 @@ export default function Home() {
       const u = userData?.user;
       if (!u) {
         // redirect to login if no session
-        window.location.href = "/login";
+        // include next param to return to enroll after login
+        const next = encodeURIComponent(`/enroll?course=${encodeURIComponent(cpCourse.slug)}`);
+        window.location.href = `/login?next=${next}`;
         return;
       }
 
@@ -273,6 +405,8 @@ export default function Home() {
         // success: bump enrolled count and mark user enrolled
         setUserEnrolledOnHome(true);
         setCpCourse((prev) => prev ? { ...prev, enrolledCount: (prev.enrolledCount || 0) + 1 } : prev);
+        // also update coursesList entry if present
+        setCoursesList((prev) => prev.map(row => row.id === cpCourse.id ? { ...row, enrolledCount: (row.enrolledCount || 0) + 1, userEnrolled: true } : row));
       }
     } catch (err) {
       console.error("unexpected enroll error", err);
@@ -439,6 +573,147 @@ export default function Home() {
     setShowProfileModal(true);
   }
 
+  /* ---------- Render helpers for course cards ---------- */
+  function CourseCard({ courseObj, isCpFallback = false }) {
+    // topics (admin will provide these fields)
+    const topics = parseTopicsFromRow(courseObj);
+    const cpFallbackTopics = ["Big-O & greedy", "Binary search", "Basic graphs"];
+    const finalTopics = topics.length ? topics.slice(0, 8) : (isCpFallback ? cpFallbackTopics : []);
+
+    // counts - try multiple common field names, otherwise fallback to provided fields
+    const enrolledCount = (typeof courseObj.enrolledCount === 'number') ? courseObj.enrolledCount : (typeof courseObj.enrolled_count === 'number' ? courseObj.enrolled_count : 0);
+    const problemCount = (typeof courseObj.problemCount === 'number') ? courseObj.problemCount : (typeof courseObj.problem_count === 'number' ? courseObj.problem_count : 0);
+
+    // course type (defensive naming)
+    const courseType = courseObj.course_type || courseObj.courseType || courseObj.type || "";
+
+    // per-course user enrolled flag (set when we enhanced coursesList)
+    const userEnrolled = !!courseObj.userEnrolled;
+
+    // helper to link visitors to login first (with next target)
+    const buildLoginWithNext = (targetPath) => {
+      const next = encodeURIComponent(targetPath);
+      return `/login?next=${next}`;
+    };
+
+    // clicking a tag toggles it in the filter
+    const onTagClick = (t, e) => {
+      e.stopPropagation();
+      toggleTopicFilter(t);
+    };
+
+    return (
+      <div className="hover-card p-6 text-left" style={{ minHeight: 300 }}>
+        <div className="flex items-start justify-between">
+          <div style={{ flex: 1 }}>
+            <h3 className="font-semibold title text-lg">{courseObj.title}</h3>
+            <p className="muted-2 text-sm mt-1">{courseObj.description || ''}</p>
+          </div>
+
+          {/* Course type badge in top-right */}
+          {courseType ? (
+            <div style={{ marginLeft: 12 }}>
+              <span className="course-type-badge">{String(courseType)}</span>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Topics mention as tags */}
+        <div className="mt-3">
+          <div className="text-sm muted-2 mb-2 font-semibold">Course topics:</div>
+          {finalTopics.length ? (
+            <div className="muted-2 text-sm course-topics-inline">
+              {finalTopics.map((t, i) => (
+                <button
+                  key={i}
+                  onClick={(e) => onTagClick(t, e)}
+                  className={`topic-chip ${selectedTopics.includes(t) ? 'selected' : ''}`}
+                  title={`Filter by ${t}`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="muted-2 text-sm">Topics will be added from admin dashboard.</div>
+          )}
+        </div>
+
+        {/* NEW: counts on single centered row */}
+        <div style={{ marginTop: 18 }}>
+          <div className="course-stats muted-2" style={{ textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 18, alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>👥 {typeof enrolledCount === 'number' ? enrolledCount : '—'} enrolled</span>
+            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>📚 {typeof problemCount === 'number' ? problemCount : '—'} problems</span>
+          </div>
+
+          {/* center the action button below counts */}
+          <div style={{ marginTop: 14, textAlign: 'center' }}>
+            {isCpFallback ? (
+              loadingCpCourse ? (
+                <button className="btn btn-cyan" disabled>Loading…</button>
+              ) : cpCourse ? (
+                userEnrolledOnHome ? (
+                  // Only allow opening the course if user is enrolled
+                  <Link href={`/enroll?course=${encodeURIComponent(cpCourse.slug)}`} className="btn btn-cyan" style={{ display: 'inline-block' }}>Open Course</Link>
+                ) : (
+                  // handleHomeEnroll will redirect to login if needed
+                  <button className="btn btn-cyan" onClick={handleHomeEnroll} disabled={enrollActionLoading} style={{ display: 'inline-block' }}>
+                    {enrollActionLoading ? "Enrolling…" : "Enroll Now"}
+                  </button>
+                )
+              ) : (
+                <a className="btn btn-cyan" href="#enroll" style={{ display: 'inline-block' }}>Enroll Now</a>
+              )
+            ) : (
+              // generic courses: enforce login before allowing enroll/open
+              userEnrolled ? (
+                // Only show Open Course if the current user is enrolled
+                user ? (
+                  <Link href={`/enroll?course=${encodeURIComponent(courseObj.slug)}`} className="btn btn-cyan" style={{ display: 'inline-block' }}>Open Course</Link>
+                ) : (
+                  // unlikely path, but redirect to login if somehow userEnrolled true but no `user` loaded
+                  <Link href={buildLoginWithNext(`/enroll?course=${encodeURIComponent(courseObj.slug)}`)} className="btn btn-cyan" style={{ display: 'inline-block' }}>Open Course</Link>
+                )
+              ) : (
+                // not enrolled: if visitor not logged in -> send to login, else go to enroll page
+                user ? (
+                  <Link href={`/enroll?course=${encodeURIComponent(courseObj.slug)}`} className="btn btn-cyan" style={{ display: 'inline-block' }}>Enroll Now</Link>
+                ) : (
+                  <Link href={buildLoginWithNext(`/enroll?course=${encodeURIComponent(courseObj.slug)}`)} className="btn btn-cyan" style={{ display: 'inline-block' }}>Enroll Now</Link>
+                )
+              )
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- Topic filter helpers (select & toggle) ---------- */
+  function toggleTopicFilter(topic) {
+    setSelectedTopics(prev => {
+      const exists = prev.includes(topic);
+      if (exists) return prev.filter(t => t !== topic);
+      return [...prev, topic];
+    });
+  }
+
+  function clearFilters() {
+    setSelectedTopics([]);
+  }
+
+  // compute which courses to show based on selectedTopics (AND filter)
+  const coursesToShow = (coursesList || []).filter(c => {
+    if (!showTopicControls) return true;
+    if (!selectedTopics || selectedTopics.length === 0) return true;
+    const topics = parseTopicsFromRow(c).map(String);
+    // require all selected topics to be present (narrowing filter)
+    return selectedTopics.every(st => topics.includes(st));
+  });
+
+  // helper to show first N cards unless showAllCourses is true
+  const visibleCourses = showAllCourses ? coursesToShow : coursesToShow.slice(0, 6);
+
   return (
     <div>
       <Head>
@@ -447,7 +722,7 @@ export default function Home() {
         <meta name="description" content="Kamonasish Roy — Software Engineer, Competitive Programmer, and Mentor." />
       </Head>
 
-      {/* Global styles (unchanged except nav hover & panel top tweak & hover-card) */}
+      {/* Global styles (unchanged except nav hover & panel top tweak & hover-card + topic styles) */}
       <style jsx global>{`
         :root {
           --font-body: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
@@ -702,6 +977,81 @@ export default function Home() {
 .hover-card:hover .contact-sub {
   color: var(--bg-dark);
 }
+
+/* topic chips styling */
+.topic-chip {
+  display: inline-block;
+  margin: 4px 6px 4px 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  background: rgba(255,255,255,0.04);
+  color: var(--muted-2);
+  border: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease, color 150ms ease;
+}
+.topic-chip:hover { transform: translateY(-3px); background: rgba(0,210,255,0.08); color: var(--text-light); }
+.topic-chip.selected { background: var(--accent-cyan); color: var(--bg-dark); border-color: rgba(0,210,255,0.18); box-shadow: 0 8px 30px rgba(0,210,255,0.08); }
+
+/* course type badge */
+.course-type-badge {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.05);
+  color: var(--muted-2);
+  text-transform: capitalize;
+}
+
+/* filter toolbar */
+.topic-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.topic-toolbar .drag-hint { font-size: 12px; color: var(--muted-2); margin-right: 8px; }
+
+/* small topics inline style (kept for fallback) */
+.course-topics-inline {
+  font-size: 0.95rem;
+  color: var(--muted-2);
+  margin-top: 4px;
+}
+
+/* responsiveness minor tweak for chip area */
+@media (max-width: 640px) {
+  .topic-chip { font-size: 0.82rem; padding: 6px 8px; }
+}
+
+/* FIX: filter & typing box visibility
+   - ensure the select / picker and the manual typing input inside the topic controls
+     are dark background with readable (light) text and visible placeholder.
+   - limited, targeted rules so rest of UI is unchanged.
+*/
+.topic-toolbar select,
+.topic-toolbar input,
+.topic-toolbar .field,
+select.p-2.field,
+input.p-2.field {
+  background: rgba(255,255,255,0.02) !important; /* subtle dark surface */
+  color: var(--text-light) !important;            /* bright text for readability */
+  border: 1px solid rgba(255,255,255,0.06) !important;
+  caret-color: var(--text-light) !important;
+}
+.topic-toolbar input::placeholder,
+.topic-toolbar select::placeholder,
+.topic-toolbar .field::placeholder {
+  color: rgba(255,255,255,0.45) !important;
+}
+
+/* small tweak: ensure course-stats items stay single-line and centered */
+.course-stats { white-space: nowrap; display: flex; gap: 18px; align-items: center; justify-content: center; }
       `}</style>
 
       <main className="min-h-screen">
@@ -749,7 +1099,6 @@ export default function Home() {
                 <p className="mt-3 muted">Software Engineer • Competitive Programmer • Mentor — I help students turn problem-solving into wins.</p>
                 <div className="mt-4 flex gap-3">
                   <Link className="btn btn-cyan" href="/about">About Me</Link>
-                  {/* Book a Lesson removed as requested */}
                 </div>
               </div>
             </div>
@@ -857,7 +1206,7 @@ export default function Home() {
             {projects.map((p) => (
               <article
                 key={p.id}
-                className="hover-card p-4 text-center"
+                className="hover-card p-6 text-center"
                 role="button"
                 tabIndex={0}
                 onClick={() => window.alert(`${p.title} — demo click`)}
@@ -881,80 +1230,132 @@ export default function Home() {
 
         <section id="teach" className="max-w-5xl mx-auto p-6 sm:p-10">
           <h2 className="text-xl font-bold mb-4 title">Learn Competitive Programming</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-            {/* CP Foundations: centered card */}
-            <div className="hover-card p-4 text-center">
-              <h3 className="font-semibold title">{cpCourse ? cpCourse.title : "CP Foundations"}</h3>
-              <p className="muted-2 text-sm">4 Weeks • Free</p>
-              <p className="muted-2 text-sm mt-2">{cpCourse ? cpCourse.description : ""}</p>
+          {/* Topic controls: checkbox to show/hide, picker to add topics (auto-apply), Clear only visible when selection exists */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <input type="checkbox" checked={showTopicControls} onChange={(e) => setShowTopicControls(e.target.checked)} />
+              <span style={{ color: 'var(--muted-2)', fontSize: 14 }}>Show topic filters</span>
+            </label>
 
-              <ul className="mt-2 muted-2 text-sm list-disc list-inside" style={{ display:'inline-block', textAlign:'left' }}>
-                <li>Big-O & greedy</li>
-                <li>Binary search</li>
-                <li>Basic graphs</li>
-              </ul>
+            {showTopicControls && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {/* topic picker: choose one available (not already selected) */}
+                <select
+                  value={topicPickerValue}
+                  onChange={(e) => setTopicPickerValue(e.target.value)}
+                  className="p-2 field"
+                  style={{ minWidth: 200 }}
+                >
+                  <option value="">— add topic to filter —</option>
+                  {uniqueTopics.filter(t => !selectedTopics.includes(t)).map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
 
-              <div className="mt-4">
-                {loadingCpCourse ? (
-                  <button className="btn btn-cyan" disabled>Loading…</button>
-                ) : cpCourse ? (
-                  <>
-                    <div style={{ marginBottom: 8 }}>
-                      {/* ALWAYS show counts */}
-                      <span className="stat-inline">👥 {cpCourse.enrolledCount ?? 0} enrolled</span>
-                      <span className="stat-inline">📚 {cpCourse.problemCount ?? 0} problems</span>
-                    </div>
+                {/* quick manual-add input (optional) */}
+                <input
+                  placeholder="Or type a topic and press Enter"
+                  className="p-2 field"
+                  style={{ minWidth: 240 }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const v = e.currentTarget.value.trim();
+                      if (!v) return;
+                      if (!selectedTopics.includes(v)) setSelectedTopics(prev => [...prev, v]);
+                      e.currentTarget.value = '';
+                    }
+                  }}
+                />
 
-                    {userEnrolledOnHome ? (
-                      <div className="flex justify-center">
-                        <Link href={`/enroll?course=${encodeURIComponent(cpCourse.slug)}`} className="btn btn-cyan">
-                          Open Course
-                        </Link>
-                      </div>
-                    ) : (
-                      <div className="flex justify-center">
-                        <button
-                          className="btn btn-cyan"
-                          onClick={handleHomeEnroll}
-                          disabled={enrollActionLoading}
-                        >
-                          {enrollActionLoading ? "Enrolling…" : `Enroll Now`}
-                        </button>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <a className="btn btn-cyan" href="#enroll">Enroll Now</a>
-                )}
+                {/* Clear visible only when there's at least one selected topic */}
+                {selectedTopics.length > 0 ? (
+                  <button className="btn" onClick={clearFilters}>Clear</button>
+                ) : null}
               </div>
-            </div>
+            )}
 
-            {/* Advanced Trees (centered) */}
-            <div className="hover-card p-4 text-center">
-              <h3 className="font-semibold title">Advanced Trees</h3>
-              <p className="muted-2 text-sm">6 Weeks • Paid</p>
-              <ul className="mt-2 muted-2 text-sm list-disc list-inside" style={{ display:'inline-block', textAlign:'left' }}>
-                <li>Centroid decomposition</li>
-                <li>LCA tricks</li>
-                <li>HLD</li>
-              </ul>
-              <div className="mt-4"><a className="btn btn-cyan" href="#enroll">Enroll Now</a></div>
-            </div>
-
-            {/* Contest Strategy (centered) */}
-            <div className="hover-card p-4 text-center">
-              <h3 className="font-semibold title">Contest Strategy</h3>
-              <p className="muted-2 text-sm">Live Coaching</p>
-              <ul className="mt-2 muted-2 text-sm list-disc list-inside" style={{ display:'inline-block', textAlign:'left' }}>
-                <li>Timed mock contests</li>
-                <li>In-depth editorials</li>
-                <li>Post-mortem</li>
-              </ul>
-              <div className="mt-4"><a className="btn btn-cyan" href="#enroll">Enroll Now</a></div>
-            </div>
-
+            {/* show chosen filters */}
+            {showTopicControls && selectedTopics.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ color: "var(--muted-2)" }}>Filtering by:</div>
+                <div style={{ marginTop: 6 }}>
+                  {selectedTopics.map((s, i) => (
+                    <button key={s} onClick={() => toggleTopicFilter(s)} className="topic-chip selected" style={{ marginRight: 6 }}>
+                      {s} ×
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* If we have courses in DB, render them dynamically so newly created courses show up on homepage.
+              Otherwise fallback to the original static three teaching cards. */}
+          {loadingCoursesList ? (
+            <div className="muted-2">Loading courses…</div>
+          ) : (coursesList && coursesList.length > 0) ? (
+            <>
+              {visibleCourses.length === 0 ? (
+                <div className="muted-2">No courses match the selected topics.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {visibleCourses.map((c) => (
+                    <CourseCard key={c.id} courseObj={c} isCpFallback={c.slug === 'cp-foundations'} />
+                  ))}
+                </div>
+              )}
+
+              {/* view all toggle if there are more courses than our preview limit */}
+              {coursesToShow.length > 6 && (
+                <div style={{ marginTop: 12, textAlign: 'center' }}>
+                  <button className="btn btn-cyan" onClick={() => setShowAllCourses(prev => !prev)}>
+                    {showAllCourses ? "Show less" : `View all (${coursesToShow.length})`}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+              {/* CP Foundations: centered card (kept as fallback) */}
+              <CourseCard courseObj={{
+                id: cpCourse?.id ?? 'cp-fallback',
+                slug: cpCourse?.slug ?? 'cp-foundations',
+                title: cpCourse?.title ?? "CP Foundations",
+                description: cpCourse?.description ?? "Foundations course for competitive programming",
+                enrolledCount: cpCourse?.enrolledCount,
+                problemCount: cpCourse?.problemCount,
+              }} isCpFallback={true} />
+
+              {/* Advanced Trees (centered) */}
+              <CourseCard courseObj={{
+                id: 'advanced-trees',
+                slug: 'advanced-trees',
+                title: 'Advanced Trees',
+                description: 'Deep dive into tree algorithms',
+                topics: ['Centroid decomposition','LCA tricks','HLD'],
+                enrolledCount: null,
+                problemCount: null,
+                userEnrolled: false,
+              }} isCpFallback={false} />
+
+              {/* Contest Strategy (centered) */}
+              <CourseCard courseObj={{
+                id: 'contest-strategy',
+                slug: 'contest-strategy',
+                title: 'Contest Strategy',
+                description: 'Live coaching: timed mocks & editorials',
+                topics: ['Timed mock contests','In-depth editorials','Post-mortem'],
+                enrolledCount: null,
+                problemCount: null,
+                userEnrolled: false,
+              }} isCpFallback={false} />
+
+            </div>
+          )}
+
         </section>
 
         <footer className="max-w-5xl mx-auto p-6 sm:p-10">

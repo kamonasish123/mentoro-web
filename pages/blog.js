@@ -38,6 +38,9 @@ export default function BlogPage() {
   const [draft, setDraft] = useState({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' })
   const [loadingMore, setLoadingMore] = useState(false)
 
+  // EDIT state: holds id when editing an existing post
+  const [editingPostId, setEditingPostId] = useState(null)
+
   // user info
   const [authUser, setAuthUser] = useState(null)
   const [currentUserName, setCurrentUserName] = useState('')
@@ -149,6 +152,7 @@ export default function BlogPage() {
         time: (p.created_at || '').slice(11, 16),        // HH:MM (if ISO)
         date_raw: p.created_at || '',
         author: authorMap.get(p.author_id) || 'Unknown',
+        author_id: p.author_id ?? null, // keep author_id for permission checks when editing/deleting
       }))
 
       setPosts(normalized)
@@ -291,7 +295,7 @@ export default function BlogPage() {
 
   /* Actions */
 
-  // publish: insert into DB (requires auth + super_admin)
+  // publish: insert into DB (requires auth + super_admin) OR update if editingPostId set
   async function publishDraft() {
     if (!mounted) return
     if (!authUser) {
@@ -309,7 +313,7 @@ export default function BlogPage() {
     const tags = (draft.tags || '').split(',').map(t => t.trim()).filter(Boolean)
 
     try {
-      const insertPayload = {
+      const payload = {
         title,
         excerpt,
         content: draft.content || '',
@@ -318,9 +322,49 @@ export default function BlogPage() {
         thumbnail: draft.thumbnail || '/thumb-placeholder.jpg',
         author_id: currentUserId,
       }
+
+      if (editingPostId) {
+        // UPDATE existing post
+        const { data: updated, error: updateErr } = await supabase
+          .from('blog_posts')
+          .update(payload)
+          .eq('id', editingPostId)
+          .select()
+          .single()
+
+        if (updateErr) {
+          console.error('update failed', updateErr)
+          return alert('Failed to update post.')
+        }
+
+        const updatedPost = {
+          id: updated.id,
+          title: updated.title,
+          excerpt: updated.excerpt,
+          content: updated.content,
+          category: updated.category,
+          tags: updated.tags || [],
+          thumbnail: updated.thumbnail || '/thumb-placeholder.jpg',
+          reads: Number(updated.reads ?? 0),
+          likes: Number(updated.likes ?? 0),
+          date: (updated.created_at || '').slice(0, 10),
+          time: (updated.created_at || '').slice(11, 16),
+          author: currentUserName || 'superadmin',
+          author_id: updated.author_id ?? currentUserId,
+        }
+
+        setPosts(prev => prev.map(p => p.id === updatedPost.id ? updatedPost : p))
+        setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' })
+        setIsWriteOpen(false)
+        setEditingPostId(null)
+        openPost(updatedPost)
+        return
+      }
+
+      // INSERT new post
       const { data: inserted, error: insertErr } = await supabase
         .from('blog_posts')
-        .insert([insertPayload])
+        .insert([payload])
         .select()
         .single()
 
@@ -341,7 +385,8 @@ export default function BlogPage() {
         likes: Number(inserted.likes ?? 0),
         date: (inserted.created_at || '').slice(0, 10),
         time: (inserted.created_at || '').slice(11, 16),
-        author: currentUserName || 'superadmin'
+        author: currentUserName || 'superadmin',
+        author_id: inserted.author_id ?? currentUserId,
       }
 
       setPosts(prev => [newPost, ...prev])
@@ -606,6 +651,55 @@ export default function BlogPage() {
     setLoadingMore(false)
   }
 
+  /* New: Open edit modal for a specific post (pre-fill draft) */
+  function openEdit(post) {
+    // permission check: superadmin OR post.author_id === currentUserId
+    const allowed = isSuperAdmin || (currentUserId && post.author_id && currentUserId === post.author_id)
+    if (!allowed) return alert('You are not allowed to edit this post.')
+
+    // set draft values (tags back to comma string)
+    setDraft({
+      title: post.title || '',
+      excerpt: post.excerpt || '',
+      content: post.content || '',
+      category: post.category || 'Educational',
+      tags: Array.isArray(post.tags) ? (post.tags || []).join(', ') : (post.tags || ''),
+      thumbnail: post.thumbnail || ''
+    })
+    setEditingPostId(post.id)
+    setIsWriteOpen(true)
+  }
+
+  /* New: Delete a post (confirm + delete from db + update UI) */
+  async function deletePost(post) {
+    // permission check
+    const allowed = isSuperAdmin || (currentUserId && post.author_id && currentUserId === post.author_id)
+    if (!allowed) return alert('You are not allowed to delete this post.')
+
+    if (!confirm('Delete this post? This action cannot be undone.')) return
+
+    try {
+      const { error } = await supabase.from('blog_posts').delete().eq('id', post.id)
+      if (error) {
+        console.error('delete failed', error)
+        return alert('Failed to delete post.')
+      }
+      // remove locally
+      setPosts(prev => prev.filter(p => p.id !== post.id))
+      // close modal if viewing the same post
+      if (selectedPost && selectedPost.id === post.id) setSelectedPost(null)
+      // also clear editing state if we were editing it
+      if (editingPostId === post.id) {
+        setEditingPostId(null)
+        setIsWriteOpen(false)
+        setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' })
+      }
+    } catch (e) {
+      console.error('deletePost unexpected', e)
+      alert('Unexpected error while deleting.')
+    }
+  }
+
   /* Render (UI unchanged semantically, but post modal & comment UI improved) */
   return (
     <>
@@ -630,7 +724,7 @@ export default function BlogPage() {
 
           <div className="actions">
             {mounted && isSuperAdmin ? (
-              <button className="btn btn-outline" onClick={() => setIsWriteOpen(true)}>Write a Post</button>
+              <button className="btn btn-outline" onClick={() => { setIsWriteOpen(true); setEditingPostId(null); setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' }) }}>Write a Post</button>
             ) : (
               <button className="btn btn-outline" onClick={() => {
                 if (!mounted || !authUser) return alert('Only superadmin can write posts. Please log in.')
@@ -675,6 +769,8 @@ export default function BlogPage() {
                 const liked = !!likes[p.id]
                 const readCount = reads[p.id] ?? p.reads
                 const postComments = comments[p.id] ?? p.comments ?? []
+                // can current user edit/delete?
+                const canManage = isSuperAdmin || (currentUserId && p.author_id && currentUserId === p.author_id)
                 return (
                   <article key={p.id} className="post-card" role="listitem">
                     <div className="thumb" aria-hidden="true" style={{ backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.45)), url(${p.thumbnail})` }} />
@@ -719,8 +815,15 @@ export default function BlogPage() {
                           </div>
                         </div>
 
-                        <div className="actions">
+                        <div className="actions" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button className="btn btn-cyan" onClick={() => openPost(p)}>Read more</button>
+                          {/* Edit & Delete buttons (visible to superadmin or author) */}
+                          {canManage ? (
+                            <>
+                              <button className="btn btn-outline" onClick={() => openEdit(p)}>Edit</button>
+                              <button className="btn" onClick={() => deletePost(p)}>Delete</button>
+                            </>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -737,25 +840,25 @@ export default function BlogPage() {
 
         {/* Write Post Modal (superadmin only) */}
         {mounted && isSuperAdmin && isWriteOpen && (
-          <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) setIsWriteOpen(false) }} role="dialog" aria-modal="true" aria-label="Write a post">
+          <div className="modal" onClick={(e) => { if (e.target === e.currentTarget) { setIsWriteOpen(false); setEditingPostId(null); } }} role="dialog" aria-modal="true" aria-label="Write a post">
             <div className="modal-card write">
-              <button className="modal-close" onClick={() => setIsWriteOpen(false)} aria-label="Close">✕</button>
+              <button className="modal-close" onClick={() => { setIsWriteOpen(false); setEditingPostId(null); }} aria-label="Close">✕</button>
 
               {/* Header with actions */}
               <div className="modal-header">
                 <div className="modal-header-left">
-                  <h2>Create a new post</h2>
+                  <h2>{editingPostId ? 'Edit post' : 'Create a new post'}</h2>
                   <div className="muted small">Write something useful — use categories & tags for discoverability</div>
                 </div>
 
                 <div className="modal-header-actions">
                   <button
                     className="btn btn-outline"
-                    onClick={() => { setIsWriteOpen(false); setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' }) }}
+                    onClick={() => { setIsWriteOpen(false); setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' }); setEditingPostId(null); }}
                   >
                     Cancel
                   </button>
-                  <button className="btn btn-primary" onClick={publishDraft}>Publish</button>
+                  <button className="btn btn-primary" onClick={publishDraft}>{editingPostId ? 'Save changes' : 'Publish'}</button>
                 </div>
               </div>
 
@@ -834,6 +937,16 @@ export default function BlogPage() {
                     <span style={{ marginLeft: 8 }}>{formatNumber(posts.find(p => p.id === selectedPost.id)?.likes ?? selectedPost.likes ?? 0)}</span>
                   </button>
                   <div className="reads muted">{formatNumber(reads[selectedPost.id] || selectedPost.reads || 0)} reads</div>
+
+                  {/* show Edit/Delete inside modal for managers */}
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                    {(isSuperAdmin || (currentUserId && selectedPost.author_id && currentUserId === selectedPost.author_id)) ? (
+                      <>
+                        <button className="btn btn-outline" onClick={() => { openEdit(selectedPost); }}>Edit</button>
+                        <button className="btn" onClick={() => deletePost(selectedPost)}>Delete</button>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="comments-section">
