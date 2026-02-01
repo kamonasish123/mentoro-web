@@ -1,9 +1,19 @@
 // pages/courses/[slug]/ranklist.js
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { supabase } from "../../../lib/supabaseClient";
+
+/**
+ * Ranklist page - uses course_user_stats aggregate table and subscribes to realtime updates.
+ *
+ * Requirements (DB):
+ * - table public.course_user_stats(course_id uuid, user_id uuid, total_solves int, first_solved_at timestamptz)
+ * - rpc get_public_profiles(ids uuid[]) -> returns public profile fields
+ *
+ * Drop-in replacement for your previous ranklist; styling preserved.
+ */
 
 export default function CourseRanklist() {
   const router = useRouter();
@@ -11,16 +21,27 @@ export default function CourseRanklist() {
 
   const [loading, setLoading] = useState(true);
   const [course, setCourse] = useState(null);
-  const [fullList, setFullList] = useState([]); // aggregated solves or enroll fallback
-  const [fallbackEnrollList, setFallbackEnrollList] = useState([]);
-  const [profilesMap, setProfilesMap] = useState(new Map());
 
-  // Helper: fetch profiles for a list of user IDs and return a Map(id -> profile)
-  // client-side helper: call RPC to fetch public profile fields (avoids RLS)
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const [pageData, setPageData] = useState([]); // rows for current page
+  const [totalCount, setTotalCount] = useState(0);
+
+  const [profilesMap, setProfilesMap] = useState(new Map());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [countryFilter, setCountryFilter] = useState("all");
+  const [institutionFilter, setInstitutionFilter] = useState("all");
+
+  const [loadingPage, setLoadingPage] = useState(false);
+  const [pollingEnabled, setPollingEnabled] = useState(false); // not needed if realtime working
+
+  const POLL_INTERVAL_MS = 30 * 1000;
+
+  // Helper: fetch public profiles via RPC
   async function fetchProfilesMap(userIds) {
     if (!Array.isArray(userIds) || userIds.length === 0) return new Map();
     const unique = Array.from(new Set(userIds)).slice(0, 2000);
-
     try {
       const { data: profiles, error } = await supabase.rpc("get_public_profiles", { ids: unique });
       if (error) {
@@ -36,8 +57,8 @@ export default function CourseRanklist() {
     }
   }
 
-  // Helper: choose best display name (prefers display_name -> full_name -> username -> short id)
   function chooseName(prof, userId) {
+    // kept for backwards compatibility in CSV export etc.
     if (prof?.display_name && !/^user\s*\d+$/i.test(prof.display_name) && prof.display_name.trim()) return prof.display_name;
     if (prof?.full_name && prof.full_name.trim()) return prof.full_name;
     if (prof?.username && prof.username.trim()) return prof.username;
@@ -45,192 +66,253 @@ export default function CourseRanklist() {
     return `User ${String(idSource).slice(0, 6)}`;
   }
 
+  // Fetch course by slug and ensure it exists
   useEffect(() => {
     if (!slug) return;
     let mounted = true;
-
     (async () => {
       setLoading(true);
       try {
-        const { data: courses, error: courseErr } = await supabase
+        const { data: courses, error } = await supabase
           .from("courses")
           .select("id, slug, title")
           .eq("slug", slug)
           .limit(1);
 
-        if (courseErr) throw courseErr;
+        if (error) throw error;
         const c = courses?.[0] ?? null;
         if (!c) {
           if (mounted) {
             setCourse(null);
-            setFullList([]);
+            setPageData([]);
+            setTotalCount(0);
             setLoading(false);
           }
           return;
         }
         if (mounted) setCourse(c);
-
-        // problems in course
-        const { data: cpRows } = await supabase
-          .from("course_problems")
-          .select("problem_id")
-          .eq("course_id", c.id);
-
-        const problemIds = (cpRows || []).map((r) => r.problem_id).filter(Boolean);
-
-        let aggregated = [];
-
-        if (problemIds.length > 0) {
-          // fetch solves (we only need user_id + solved_at)
-          const { data: solves, error: solvesErr } = await supabase
-            .from("solves")
-            .select("user_id, solved_at, problem_id")
-            .in("problem_id", problemIds)
-            .order("solved_at", { ascending: true });
-
-          if (!solvesErr && Array.isArray(solves) && solves.length > 0) {
-            // aggregate per user
-            const m = new Map();
-            for (const s of solves) {
-              const uid = s.user_id;
-              if (!m.has(uid)) {
-                m.set(uid, { user_id: uid, total: 0, firstSolvedAt: s.solved_at || null });
-              }
-              const ent = m.get(uid);
-              ent.total += 1;
-            }
-
-            // convert to array and sort
-            const arr = Array.from(m.values()).sort((a, b) => {
-              if (b.total !== a.total) return b.total - a.total; // more solves first
-              if (!a.firstSolvedAt) return 1;
-              if (!b.firstSolvedAt) return -1;
-              return new Date(a.firstSolvedAt) - new Date(b.firstSolvedAt); // earlier firstSolve wins
-            });
-
-            // fetch profile info for these users (used for institution/country and to seed profilesMap)
-            const userIds = arr.map((x) => x.user_id);
-            const profMap = await fetchProfilesMap(userIds);
-
-            aggregated = arr.map((u, i) => {
-              const prof = profMap.get(u.user_id) || {};
-              return {
-                pos: i + 1,
-                id: u.user_id,
-                institution: prof.institution || null,
-                country: prof.country || null,
-                total: u.total,
-                firstSolvedAt: u.firstSolvedAt,
-              };
-            });
-
-            // merge profMap into local profilesMap for quick render
-            if (mounted && profMap && profMap.size > 0) {
-              setProfilesMap((prev) => {
-                const merged = new Map(prev);
-                for (const [k, v] of profMap) merged.set(k, v);
-                return merged;
-              });
-            }
-          }
-        }
-
-        // fallback to enrollments if no solves
-        if (!aggregated || aggregated.length === 0) {
-          const { data: ranks, error: enrollErr } = await supabase
-            .from("enrollments")
-            .select("user_id, enrolled_at")
-            .eq("course_id", c.id)
-            .order("enrolled_at", { ascending: true });
-
-          if (enrollErr) throw enrollErr;
-
-          const userIds = (ranks || []).map((r) => r.user_id);
-          const profMap = await fetchProfilesMap(userIds);
-
-          const list = (ranks || []).map((r, i) => {
-            const p = profMap.get(r.user_id) || {};
-            return {
-              pos: i + 1,
-              id: r.user_id,
-              institution: p.institution || null,
-              country: p.country || null,
-              total: 0,
-              firstSolvedAt: r.enrolled_at || null,
-            };
-          });
-
-          if (mounted) {
-            setFallbackEnrollList(list);
-            setFullList(list);
-            // merge profile map
-            if (profMap && profMap.size > 0) {
-              setProfilesMap((prev) => {
-                const merged = new Map(prev);
-                for (const [k, v] of profMap) merged.set(k, v);
-                return merged;
-              });
-            }
-          }
-        } else {
-          if (mounted) {
-            setFullList(aggregated);
-            setFallbackEnrollList([]);
-          }
-        }
       } catch (err) {
-        console.error("failed to load full ranklist", err);
+        console.error("failed to load course", err);
+        if (mounted) setCourse(null);
       } finally {
         if (mounted) setLoading(false);
       }
     })();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [slug]);
 
-  // When the fullList changes, ensure we have the profile rows for all users
-  useEffect(() => {
-    if (!fullList || fullList.length === 0) return;
+  // Core: fetch a page from course_user_stats with filters
+  const fetchPage = useCallback(async (opts = {}) => {
+    if (!course?.id) return;
+    const { page = 1, pageSize = 20, search = "", country = "all", institution = "all", signal } = opts;
+    setLoadingPage(true);
+    try {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
 
-    const ids = fullList.map((u) => u.id).filter(Boolean);
-    if (ids.length === 0) return;
+      let q = supabase
+        .from("course_user_stats")
+        .select("user_id, total_solves, first_solved_at", { count: "exact" })
+        .eq("course_id", course.id)
+        .order("total_solves", { ascending: false })
+        .order("first_solved_at", { ascending: true })
+        .range(from, to);
 
-    (async () => {
-      try {
-        const map = await fetchProfilesMap(ids);
-        if (map && map.size > 0) {
-          setProfilesMap((prev) => {
-            const merged = new Map(prev);
-            for (const [k, v] of map) merged.set(k, v);
-            return merged;
-          });
-        }
-      } catch (err) {
-        console.warn("failed to refresh profilesMap for fullList", err);
+      // server-side search only on profile fields if your course_user_stats doesn't include display_name, this will not filter.
+      // We will always fetch the page then filter client-side by search if needed.
+      const { data, error, count } = await q;
+
+      if (error) {
+        // If query fails (missing table/permissions), fallback: set empty
+        console.warn("course_user_stats query error:", error);
+        setPageData([]);
+        setTotalCount(0);
+        setLoadingPage(false);
+        return;
       }
-    })();
-  }, [fullList.length]);
 
-  if (loading)
-    return (
-      <div className="page-wrap">
-        <div className="center">Loading ranklist…</div>
-      </div>
-    );
-  if (!course)
-    return (
-      <div className="page-wrap">
-        <div className="center">Course not found</div>
-      </div>
-    );
+      if (signal?.aborted) { setLoadingPage(false); return; }
+
+      const rows = data || [];
+      setTotalCount(Number(count || 0));
+      setPageData(rows);
+
+      // fetch profiles for these users
+      const ids = rows.map(r => r.user_id).filter(Boolean);
+      if (ids.length > 0) {
+        const map = await fetchProfilesMap(ids);
+        setProfilesMap((prev) => {
+          const merged = new Map(prev);
+          for (const [k, v] of map) merged.set(k, v);
+          return merged;
+        });
+      }
+    } catch (err) {
+      console.error("fetchPage unexpected:", err);
+    } finally {
+      setLoadingPage(false);
+    }
+  }, [course?.id]);
+
+  // load first page when course is set or filters change
+  useEffect(() => {
+    if (!course) return;
+    setPage(1);
+    fetchPage({ page: 1, pageSize, search: searchQuery, country: countryFilter, institution: institutionFilter });
+  }, [course, pageSize, searchQuery, countryFilter, institutionFilter, fetchPage]);
+
+  // Polling fallback (not required if realtime subscriptions work)
+  useEffect(() => {
+    if (!course || !pollingEnabled) return;
+    const id = setInterval(() => {
+      fetchPage({ page, pageSize, search: searchQuery, country: countryFilter, institution: institutionFilter });
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [course, pollingEnabled, page, pageSize, searchQuery, countryFilter, institutionFilter, fetchPage]);
+
+  // Re-fetch page on page change
+  useEffect(() => {
+    if (!course) return;
+    fetchPage({ page, pageSize, search: searchQuery, country: countryFilter, institution: institutionFilter });
+  }, [page, pageSize, course, searchQuery, countryFilter, institutionFilter, fetchPage]);
+
+  // Realtime subscription: listen for changes on course_user_stats and profiles
+  useEffect(() => {
+    if (!course) return;
+    let channel;
+    const subs = [];
+
+    // Handler simply refetches current page for authoritative data
+    const handleAggChange = async (payload) => {
+      // payload contains event and record; we re-fetch the current page for correctness
+      try {
+        await fetchPage({ page, pageSize, search: searchQuery, country: countryFilter, institution: institutionFilter });
+      } catch (e) {
+        console.warn("handleAggChange error", e);
+      }
+    };
+
+    // Profile changes: if affected user is visible, refresh that user's profile
+    const handleProfileChange = async (payload) => {
+      const uid = (payload?.new && payload.new.id) || (payload?.record && payload.record.id) || payload?.old?.id || null;
+      if (!uid) return;
+      // If this user appears in current pageData, refresh their profile
+      const visibleIds = (pageData || []).map(r => r.user_id);
+      if (!visibleIds.includes(uid)) return;
+      try {
+        const map = await fetchProfilesMap([uid]);
+        setProfilesMap((prev) => {
+          const merged = new Map(prev);
+          for (const [k, v] of map) merged.set(k, v);
+          return merged;
+        });
+      } catch (err) {
+        console.warn("profile refresh error", err);
+      }
+    };
+
+    // Supabase v2 channel API (preferred)
+    try {
+      if (typeof supabase.channel === "function") {
+        channel = supabase.channel(`course_user_stats_${course.id}`);
+
+        channel
+          .on("postgres_changes", { event: "*", schema: "public", table: "course_user_stats", filter: `course_id=eq.${course.id}` }, (payload) =>
+            handleAggChange(payload)
+          )
+          .subscribe();
+
+        channel
+          .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (payload) =>
+            handleProfileChange(payload)
+          )
+          .subscribe();
+      }
+    } catch (err) {
+      console.warn("channel v2 subscribe failed:", err);
+    }
+
+    // legacy API fallback
+    try {
+      if (!channel && supabase.from && typeof supabase.from === "function" && typeof supabase.from("course_user_stats").on === "function") {
+        const s1 = supabase.from(`course_user_stats:course_id=eq.${course.id}`).on("*", payload => handleAggChange(payload)).subscribe();
+        const s2 = supabase.from("profiles").on("*", payload => handleProfileChange(payload)).subscribe();
+        subs.push(s1, s2);
+      }
+    } catch (err) {
+      console.warn("legacy subscribe failed:", err);
+    }
+
+    return () => {
+      try {
+        if (channel && channel.unsubscribe) {
+          try { supabase.removeChannel(channel); } catch (e) { /* best effort */ }
+        }
+      } catch (e) { /* ignore */ }
+
+      if (subs.length) {
+        subs.forEach(s => {
+          try { s.unsubscribe && s.unsubscribe(); } catch (e) { /* ignore */ }
+        });
+      }
+    };
+  }, [course, page, pageSize, pageData, searchQuery, countryFilter, institutionFilter, fetchPage]);
+
+  // derive dropdown options from profilesMap
+  const availableCountries = useMemo(() => {
+    const s = new Set();
+    for (const [, p] of profilesMap) if (p?.country) s.add(p.country);
+    return ["all", ...Array.from(s).sort()];
+  }, [profilesMap]);
+
+  const availableInstitutions = useMemo(() => {
+    const s = new Set();
+    for (const [, p] of profilesMap) if (p?.institution) s.add(p.institution);
+    return ["all", ...Array.from(s).sort()];
+  }, [profilesMap]);
+
+  // Export CSV
+  function exportCSV() {
+    const rows = (pageData || []).map((r) => {
+      const prof = profilesMap.get(r.user_id) || {};
+      return {
+        rank: "-", // rank not stored in aggregate table; we could compute relative to page & total
+        user_id: r.user_id || "",
+        name: chooseName(prof, r.user_id),
+        institution: prof.institution || "—",
+        country: prof.country || "—",
+        solved: r.total_solves ?? 0,
+        first_solved_at: r.first_solved_at ?? "—",
+      };
+    });
+
+    const header = ["user_id","name","institution","country","solved","first_solved_at"];
+    const csv = [header.join(","), ...rows.map(row => header.map(h => `"${String(row[h] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slug || "course"}-ranklist-page-${page}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  if (loading) return (
+    <div className="page-wrap"><div className="center">Loading ranklist…</div></div>
+  );
+  if (!course) return (
+    <div className="page-wrap"><div className="center">Course not found</div></div>
+  );
+
+  const displayed = pageData || [];
+  const pagesCount = Math.max(1, Math.ceil((totalCount || 0) / pageSize));
 
   return (
     <div className="page-wrap">
-      <Head>
-        <title>Ranklist — {course.title}</title>
-      </Head>
+      <Head><title>Ranklist — {course.title}</title></Head>
 
       <main className="container">
         <div className="top">
@@ -239,13 +321,51 @@ export default function CourseRanklist() {
             <p className="muted">Course ranklist — ordered by total solves (tie-break: earliest first solve)</p>
           </div>
 
-          <div className="actions">
-            <Link href={`/courses/${encodeURIComponent(slug) || ""}`} className="btn btn-cyan" aria-label="Back to course">
-              Back to course
-            </Link>
+          <div className="actions" style={{ gap: 12, alignItems: "center" }}>
+            <Link href={`/enroll?course=${encodeURIComponent(slug || "")}`} className="btn btn-cyan" aria-label="Back to course">Back to course</Link>
           </div>
         </div>
 
+        {/* Controls */}
+        <section style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="search"
+              placeholder="Search name..."
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+              style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.08)" }}
+            />
+            <select value={countryFilter} onChange={(e) => { setCountryFilter(e.target.value); setPage(1); }} style={{ padding: "8px", borderRadius: 8 }}>
+              {availableCountries.map((c) => <option key={c} value={c}>{c === "all" ? "All countries" : c}</option>)}
+            </select>
+
+            <select value={institutionFilter} onChange={(e) => { setInstitutionFilter(e.target.value); setPage(1); }} style={{ padding: "8px", borderRadius: 8 }}>
+              {availableInstitutions.map((ins) => <option key={ins} value={ins}>{ins === "all" ? "All institutions" : ins}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ fontSize: 13, color: "var(--muted-2)" }}>
+              Showing <strong>{totalCount ?? 0}</strong> participants
+            </div>
+
+            <label style={{ fontSize: 13, color: "var(--muted-2)", display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 13 }}>Per page</span>
+              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: "6px", borderRadius: 8 }}>
+                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+
+            <button className="btn" onClick={() => setPollingEnabled(p => !p)} title="Toggle live polling">
+              {pollingEnabled ? "Polling: On" : "Polling: Off"}
+            </button>
+
+            <button className="btn btn-cyan" onClick={exportCSV} title="Export current page as CSV">Export CSV</button>
+          </div>
+        </section>
+
+        {/* List */}
         <section className="content-card">
           <div className="list-header">
             <div className="rank-col">#</div>
@@ -257,39 +377,82 @@ export default function CourseRanklist() {
           </div>
 
           <div className="list-body">
-            {fullList.length === 0 ? (
-              <div className="empty">No participants yet.</div>
+            {displayed.length === 0 ? (
+              <div className="empty">{loadingPage ? "Loading…" : "No participants match your filters."}</div>
             ) : (
-              fullList.map((u) => (
-                <div key={u.id + "-" + u.pos} className={`row ${u.pos <= 3 ? "top-three" : ""}`}>
-                  <div className="rank-col">
-                    {u.pos <= 3 ? (
-                      <span className={`medal m${u.pos}`}>{u.pos === 1 ? "🥇" : u.pos === 2 ? "🥈" : "🥉"}</span>
-                    ) : (
-                      <span className="rank-num">{u.pos}</span>
-                    )}
+              displayed.map((u, idx) => {
+                const uid = u.user_id ?? u.id;
+                const prof = profilesMap.get(uid) || {};
+                const rank = (page - 1) * pageSize + idx + 1;
+                const solved = u.total_solves ?? u.total ?? 0;
+                const first = u.first_solved_at ?? u.firstSolvedAt ?? u.first_solved_at ?? null;
+
+                // client-side filtering for search / country / institution (search only on display_name per your request)
+                const displayNameLower = (prof.display_name || "").toLowerCase();
+                if (searchQuery && !displayNameLower.includes(searchQuery.toLowerCase())) return null;
+                if (countryFilter !== "all" && (prof.country || "—") !== countryFilter) return null;
+                if (institutionFilter !== "all" && (prof.institution || "—") !== institutionFilter) return null;
+
+                // prepare display name split (first letter + rest). No extra space between spans.
+                const raw = (prof.display_name && prof.display_name.trim()) ? prof.display_name.trim() : "—";
+                const firstChar = raw.charAt(0) || "";
+                const restChars = raw.slice(1) || "";
+
+                return (
+                  <div key={`${uid}-${rank}`} className={`row ${rank <= 3 ? "top-three" : ""}`}>
+                    <div className="rank-col">
+                      {rank <= 3 ? (
+                        <span className={`medal m${rank}`}>{rank === 1 ? "🥇" : rank === 2 ? "🥈" : "🥉"}</span>
+                      ) : (
+                        <span className="rank-num">{rank}</span>
+                      )}
+                    </div>
+
+                    <div className="name-col">
+                      {/* Name: top-10 => first letter black + rest red; others => cyan text.
+                          ONLY show display_name (no username, no fallbacks) as requested. */}
+                      {rank <= 10 ? (
+                        <div>
+                          <div style={{ fontWeight: 800, display: "inline-block", lineHeight: 1 }}>
+                            <span style={{ color: "#000000", fontWeight: 800 }}>{firstChar}</span>
+                            <span style={{ color: "#ef4444", fontWeight: 800 }}>{restChars}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="name-bold" style={{ color: "#06b6d4" }}>{raw}</div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="inst-col">{prof.institution || "—"}</div>
+                    <div className="country-col">{prof.country || "—"}</div>
+
+                    <div className="solved-col">
+                      <span className="solved-badge">{solved}</span>
+                    </div>
+
+                    <div className="first-col">{first ? new Date(first).toLocaleString() : "—"}</div>
                   </div>
-
-                  <div className="name-col">
-                    <div className="name-bold">{chooseName(profilesMap.get(u.id), u.id)}</div>
-                  </div>
-
-                  <div className="inst-col">{u.institution || "—"}</div>
-                  <div className="country-col">{u.country || "—"}</div>
-
-                  <div className="solved-col">
-                    <span className="solved-badge">{u.total ?? 0}</span>
-                  </div>
-
-                  <div className="first-col">{u.firstSolvedAt ? new Date(u.firstSolvedAt).toLocaleString() : "—"}</div>
-                </div>
-              ))
+                );
+              })
             )}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px" }}>
+            <div style={{ color: "var(--muted-2)" }}>Page {page} of {pagesCount}</div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn" onClick={() => setPage(1)} disabled={page <= 1}>« First</button>
+              <button className="btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>‹ Prev</button>
+              <button className="btn" onClick={() => setPage(p => Math.min(pagesCount, p + 1))} disabled={page >= pagesCount}>Next ›</button>
+              <button className="btn" onClick={() => setPage(pagesCount)} disabled={page >= pagesCount}>Last »</button>
+            </div>
           </div>
 
           <div className="footer-note">
             <small>
-              Ranking prioritizes users with more solves. If two users have same total, the user who solved earlier ranks higher.
+              Ranking prioritizes users with more solves. Tie-break: earlier first solve ranks higher.
             </small>
           </div>
         </section>
@@ -350,6 +513,8 @@ export default function CourseRanklist() {
         }
         .btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,210,255,0.06); border-color: rgba(0,210,255,0.18); }
 
+        .btn[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
         .btn-cyan {
           background: rgba(0,210,255,0.06);
           color: #002;
@@ -374,6 +539,10 @@ export default function CourseRanklist() {
           font-weight:700;
           align-items:center;
           border-bottom: 1px solid rgba(255,255,255,0.03);
+          position: sticky;
+          top: 8px;            /* sticky header */
+          background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+          z-index: 2;
         }
 
         .list-body { display:flex; flex-direction:column; }

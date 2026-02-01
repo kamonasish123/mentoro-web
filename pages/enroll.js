@@ -916,15 +916,25 @@ export default function EnrollPage() {
               {ranklist.length === 0 ? (
                 <div className="text-slate-500">No users yet.</div>
               ) : (
-                ranklist.map((u, i) => (
-                  <div key={u.id + "-" + i} className="flex justify-between items-center bg-slate-50 rounded-lg px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{i + 1}.</span>
-                      <span className="font-semibold" style={{ color: "#06b6d4" }}>{u.name}</span>
+                ranklist.map((u, i) => {
+                  // render first letter black and rest red (LGM style).
+                  const raw = String(u.name || "").trim();
+                  const first = raw.charAt(0) || "";
+                  const rest = raw.slice(1) || "";
+                  return (
+                    <div key={u.id + "-" + i} className="flex justify-between items-center bg-slate-50 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{i + 1}.</span>
+
+                        {/* display name: first letter black, rest red (no space between) */}
+                        <span className="font-semibold" style={{ display: "inline-block", lineHeight: 1 }}>
+                          <span style={{ color: "#000000", fontWeight: 800 }}>{first}</span><span style={{ color: "#ef4444", fontWeight: 800 }}>{rest}</span>
+                        </span>
+                      </div>
+                      <span className="font-medium text-slate-700">{u.total ?? 0}</span>
                     </div>
-                    <span className="font-medium text-slate-700">{u.total ?? 0}</span>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
