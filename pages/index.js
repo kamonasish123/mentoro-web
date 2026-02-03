@@ -126,6 +126,9 @@ export default function Home() {
   // show limited cards on homepage
   const [showAllCourses, setShowAllCourses] = useState(false);
 
+  // derive operator capability: admins and moderators (and super_admin) should see admin UI
+  const isOperator = !!(profile && (["super_admin","admin","moderator"].includes((profile.role || "").toLowerCase()) || !!profile.is_admin));
+
   // load session + profile
   useEffect(() => {
     let mounted = true;
@@ -1080,7 +1083,7 @@ input.p-2.field {
               )}
 
               {/* Admin stays visible only for admins */}
-              {isAdmin && (
+              {isOperator && (
                 <Link href="/admin" className="btn btn-cyan">
                   Admin
                 </Link>
@@ -1492,7 +1495,7 @@ input.p-2.field {
         </footer>
 
         {/* Floating admin button (dev) */}
-        {isAdmin && (
+        {isOperator && (
           <Link href="/admin" className="admin-fab" aria-label="Admin (dev)">
             Admin
           </Link>

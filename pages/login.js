@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 
+const SUPPORT_EMAIL = "rkamonasish@gmail.com"; // used in blocked message
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -15,27 +17,83 @@ export default function LoginPage() {
   async function handleEmailLogin(e) {
     e?.preventDefault();
     setMessage(null);
+
     if (!email || !password) {
       setMessage({ type: "error", text: "Email and password required." });
       return;
     }
+
     setLoading(true);
     try {
+      // signInWithPassword returns { data, error } in supabase-js v2
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
-        setMessage({ type: "error", text: error.message });
-      } else {
-        // success — redirect
-        setMessage({ type: "success", text: "Logged in — redirecting…" });
-        setTimeout(() => (window.location.href = "/"), 600);
+        setMessage({ type: "error", text: error.message || "Login failed." });
+        return;
       }
+
+      // get the authenticated user (should be present)
+      let user = null;
+      try {
+        const { data: ud } = await supabase.auth.getUser();
+        user = ud?.user ?? data?.user ?? null;
+      } catch (e) {
+        // fallback to returned data
+        user = data?.user ?? null;
+      }
+
+      if (!user || !user.id) {
+        // Unexpected: we have a session but no user id. Show a message and do not redirect.
+        setMessage({ type: "error", text: "Login succeeded but user info unavailable. Please try again or contact admin." });
+        return;
+      }
+
+      // Check if profile has is_blocked flag
+      try {
+        const { data: prof, error: profErr } = await supabase
+          .from("profiles")
+          .select("is_blocked")
+          .eq("id", user.id)
+          .single();
+
+        if (profErr) {
+          // If RLS prevents select or any other DB error, show message and do not redirect.
+          console.warn("profile lookup after sign-in failed:", profErr);
+          setMessage({ type: "error", text: "Login succeeded but we couldn't verify account status. Contact admin if the problem persists." });
+          return;
+        }
+
+        if (prof && prof.is_blocked) {
+          // sign the user out immediately and inform them
+          try {
+            await supabase.auth.signOut();
+          } catch (signOutErr) {
+            console.warn("signOut after blocked account:", signOutErr);
+          }
+          setMessage({
+            type: "error",
+            // show mailto link in message text field (simple HTML won't be rendered here),
+            // so include plain text instruction and clickable mailto below.
+            text: "Your account has been blocked. Contact administration to restore access."
+          });
+          return;
+        }
+      } catch (err) {
+        console.error("error checking profile.is_blocked:", err);
+        setMessage({ type: "error", text: "Login succeeded but checking account status failed. Contact admin." });
+        return;
+      }
+
+      // Not blocked -> success: redirect to homepage
+      setMessage({ type: "success", text: "Logged in — redirecting…" });
+      router.replace("/");
     } catch (err) {
       console.error("login error", err);
-      setMessage({ type: "error", text: "Unexpected error" });
+      setMessage({ type: "error", text: err?.message || "Unexpected error" });
     } finally {
       setLoading(false);
     }
@@ -45,18 +103,21 @@ export default function LoginPage() {
     setMessage(null);
     setLoading(true);
     try {
+      // signInWithOAuth will redirect the browser for OAuth flow.
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
       });
+
       if (error) {
-        setMessage({ type: "error", text: error.message });
+        setMessage({ type: "error", text: error.message || "OAuth login failed." });
+        setLoading(false);
       } else {
         setMessage({ type: "info", text: "Opening Google sign-in…" });
+        // redirect occurs; keep loading as-is
       }
     } catch (err) {
       console.error("google login err", err);
       setMessage({ type: "error", text: "Unexpected error" });
-    } finally {
       setLoading(false);
     }
   }
@@ -144,6 +205,10 @@ export default function LoginPage() {
 
         .small-muted { color: var(--muted-2); font-size: 0.95rem; text-align: center; }
         .google-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
+
+        .blocked-note { margin-top: 8px; color: #ffd7d7; font-weight: 700; text-align: center; }
+        .blocked-contact { margin-top: 6px; text-align: center; font-size: 0.95rem; color: #ffd7d7; }
+        .blocked-contact a { color: #fff; text-decoration: underline; }
       `}</style>
 
       <main className="min-h-screen flex items-center justify-center p-6">
@@ -240,6 +305,16 @@ export default function LoginPage() {
               >
                 {message.text}
               </div>
+
+              {/* If the message indicates blocked account, show contact admin CTA */}
+              {message.type === "error" && message.text && message.text.toLowerCase().includes("blocked") && (
+                <>
+                  <div className="blocked-note">Contact administration to restore access.</div>
+                  <div className="blocked-contact">
+                    <a href={`mailto:${SUPPORT_EMAIL}`}>Email: {SUPPORT_EMAIL}</a>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

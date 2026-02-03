@@ -1,5 +1,5 @@
 // pages/admin.js
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { supabase } from "../lib/supabaseClient";
@@ -9,17 +9,25 @@ import { supabase } from "../lib/supabaseClient";
  - role-based: super_admin / admin / moderator allowed
  - owner (rkamonasish@gmail.com) is ensured super_admin
  - admin can set any role; moderator limited to premium/user
- - set role by email or via inline user list
+ - owner protected: cannot be demoted by anyone
 */
 
 const OWNER_EMAIL = "rkamonasish@gmail.com";
 const ALL_ROLES = ["super_admin", "admin", "moderator", "premium", "user"];
 const MODERATOR_ALLOWED = ["premium", "user"];
 
+// rank: higher number = more privilege
+const ROLE_RANK = {
+  user: 0,
+  premium: 1,
+  moderator: 2,
+  admin: 3,
+  super_admin: 4,
+};
+
 function isValidUrl(value) {
   if (!value) return false;
   try {
-    // basic URL validation
     new URL(value);
     return true;
   } catch {
@@ -32,8 +40,20 @@ export default function AdminPage() {
   const [profile, setProfile] = useState(null); // current admin's profile (with role)
   const [currentUser, setCurrentUser] = useState(null); // auth user (has email)
   const [courses, setCourses] = useState([]);
-  const [users, setUsers] = useState([]);
   const [problems, setProblems] = useState([]);
+
+  // USERS: pagination / filters
+  const [users, setUsers] = useState([]);
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersPageSize, setUsersPageSize] = useState(20);
+  const [usersTotalCount, setUsersTotalCount] = useState(0);
+  const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState("all");
+  const usersAbortRef = useRef(null);
+  const [usersLoading, setUsersLoading] = useState(false);
+
+  // store pending role selections (so we don't overwrite original u.role before validation)
+  const [pendingRoles, setPendingRoles] = useState({});
 
   // UI/form state for create/edit course
   const [courseTitle, setCourseTitle] = useState("");
@@ -60,13 +80,13 @@ export default function AdminPage() {
   const [probVideo, setProbVideo] = useState("");
   const [probText, setProbText] = useState("");
 
-  // set role by email card
-  const [roleEmail, setRoleEmail] = useState("");
-  const [roleToSet, setRoleToSet] = useState("user");
   const [actionMsg, setActionMsg] = useState(null);
 
   // editing topics per existing course: { [courseId]: { editing: bool, topics: [], input: "" } }
   const [editingTopicsMap, setEditingTopicsMap] = useState({});
+
+  // derived roles available for operator (keeps stable)
+  const rolesForFilter = useMemo(() => ["all", ...ALL_ROLES], []);
 
   useEffect(() => {
     (async () => {
@@ -86,7 +106,7 @@ export default function AdminPage() {
         // fetch profile row
         const { data: prof, error: profErr } = await supabase
           .from("profiles")
-          .select("id, username, display_name, role, is_admin, institution, country")
+          .select("id, username, display_name, role, is_admin, institution, country, email, is_blocked")
           .eq("id", user.id)
           .single();
 
@@ -106,7 +126,7 @@ export default function AdminPage() {
         // re-fetch profile after ensure
         const { data: prof2 } = await supabase
           .from("profiles")
-          .select("id, username, display_name, role, is_admin, institution, country")
+          .select("id, username, display_name, role, is_admin, institution, country, email, is_blocked")
           .eq("id", user.id)
           .single();
 
@@ -126,8 +146,10 @@ export default function AdminPage() {
 
         setProfile(loadedProfile);
 
-        // load data for dashboard
-        await loadAll();
+        // load courses + problems (users load handled separately with pagination)
+        await loadCountsAndLists();
+        // load first page of users
+        await fetchUsersPage({ page: 1, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
       } catch (err) {
         console.error("admin init error", err);
         window.location.href = "/";
@@ -135,30 +157,181 @@ export default function AdminPage() {
         setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadAll() {
+  // Re-fetch users when userSearch / role filter / page / pageSize changes
+  useEffect(() => {
+    // reset to page 1 when search or role changes
+    setUsersPage(1);
+    fetchUsersPage({ page: 1, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userSearch, userRoleFilter]);
+
+  useEffect(() => {
+    fetchUsersPage({ page: usersPage, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usersPage, usersPageSize]);
+
+  // cancel any in-flight user fetch on unmount
+  useEffect(() => {
+    return () => {
+      if (usersAbortRef.current) {
+        try { usersAbortRef.current.abort(); } catch (e) {}
+      }
+    };
+  }, []);
+
+  async function loadCountsAndLists() {
     try {
-      const [cRes, pRes, uRes] = await Promise.all([
+      const [cRes, pRes] = await Promise.all([
         supabase.from("courses").select("*").order("created_at", { ascending: false }),
         supabase.from("problems").select("*").order("created_at", { ascending: false }),
-        // include email if present in profiles to support set-by-email; include role/is_admin
-        // Note: if your profiles table does not have `email`, Supabase will ignore unknown columns in many clients,
-        // but if you face DB errors here remove `email` from the select string.
-        supabase.from("profiles").select("id, username, display_name, email, role, is_admin, created_at").order("created_at", { ascending: false }),
       ]);
-
       if (cRes.error) console.warn("courses load err", cRes.error);
       if (pRes.error) console.warn("problems load err", pRes.error);
-      if (uRes.error) console.warn("users load err", uRes.error);
-
       setCourses(cRes.data || []);
       setProblems(pRes.data || []);
-      setUsers(uRes.data || []);
-      // reset any editing maps for fresh data
       setEditingTopicsMap({});
     } catch (err) {
-      console.error("loadAll failed", err);
+      console.error("loadCountsAndLists failed", err);
+    }
+  }
+
+  // Fetch a page of users with search + role filter (server-side)
+  // NOTE: if you search by email and no profile exists, we try auth.users to show the account
+  async function fetchUsersPage(opts = {}) {
+    const { page = 1, pageSize = 20, search = "", role = "all" } = opts;
+    setUsersLoading(true);
+    // abort previous
+    if (usersAbortRef.current) {
+      try { usersAbortRef.current.abort(); } catch (e) {}
+    }
+    const controller = new AbortController();
+    usersAbortRef.current = controller;
+
+    try {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      // Build base query selecting the fields including email (you added email column)
+      let q = supabase
+        .from("profiles")
+        .select("id, username, display_name, email, role, is_admin, created_at, is_blocked", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .range(from, to);
+
+      // role filter
+      if (role && role !== "all") {
+        q = q.eq("role", role);
+      }
+
+      // search: OR across username, display_name, email
+      const trimmed = (search || "").trim();
+      if (trimmed) {
+        const esc = trimmed.replace(/%/g, "\\%").replace(/,/g, " "); // minimal sanitization
+        const pattern = `%${esc}%`;
+        // supabase .or expects a string like "username.ilike.%foo%,display_name.ilike.%foo%,email.ilike.%foo%"
+        const orExpr = `username.ilike.${pattern},display_name.ilike.${pattern},email.ilike.${pattern}`;
+        q = q.or(orExpr);
+      }
+
+      const { data, error, count } = await q;
+
+      if (controller.signal.aborted) {
+        setUsersLoading(false);
+        return;
+      }
+
+      if (error) {
+        console.warn("fetchUsersPage error:", error);
+        setUsers([]);
+        setUsersTotalCount(0);
+        setUsersLoading(false);
+        return;
+      }
+
+      // If user searched by exact email (contains '@') and profiles result is empty,
+      // try looking up auth.users for that email and include as placeholder.
+      // IMPORTANT: mark whether a shown item actually has a profiles row (has_profile)
+      let finalUsers = (Array.isArray(data) ? data.map(r => ({ ...r, has_profile: true })) : []);
+      let finalCount = Number(count || 0);
+
+      if (trimmed && trimmed.includes("@") && (!Array.isArray(finalUsers) || finalUsers.length === 0)) {
+        try {
+          const emailPattern = `%${trimmed}%`;
+          const { data: authRows, error: authErr } = await supabase
+            .from("auth.users")
+            .select("id, email, created_at")
+            .ilike("email", emailPattern)
+            .limit(10);
+
+          if (!authErr && Array.isArray(authRows) && authRows.length > 0) {
+            // For each auth user found, check if profile exists, if not create a placeholder
+            const placeholders = [];
+            for (const a of authRows) {
+              // try to fetch profile by id (single)
+              try {
+                const { data: profById, error: profByIdErr } = await supabase
+                  .from("profiles")
+                  .select("id, username, display_name, email, role, is_admin, created_at, is_blocked")
+                  .eq("id", a.id)
+                  .limit(1);
+
+                if (!profByIdErr && Array.isArray(profById) && profById.length > 0) {
+                  // profile exists -> show that, mark has_profile true
+                  placeholders.push({ ...profById[0], has_profile: true });
+                } else {
+                  // no profile -> show placeholder (allows inline role set) AND mark has_profile false
+                  placeholders.push({
+                    id: a.id,
+                    username: (a.email || "").split("@")[0],
+                    display_name: null,
+                    email: a.email || null,
+                    role: "user",
+                    is_admin: false,
+                    created_at: a.created_at || null,
+                    has_profile: false,
+                    is_blocked: false,
+                    /* note: saving role inline will upsert into profiles row */
+                  });
+                }
+              } catch (e) {
+                // if profile lookup fails, still add a basic placeholder
+                placeholders.push({
+                  id: a.id,
+                  username: (a.email || "").split("@")[0],
+                  display_name: null,
+                  email: a.email || null,
+                  role: "user",
+                  is_admin: false,
+                  created_at: a.created_at || null,
+                  has_profile: false,
+                  is_blocked: false,
+                });
+              }
+            }
+
+            finalUsers = placeholders;
+            // Adjust count: can't reliably compute total when mixing sources; show placeholders count
+            finalCount = placeholders.length;
+          }
+        } catch (e) {
+          // ignore auth.users lookup errors
+        }
+      }
+
+      setUsers(finalUsers || []);
+      setUsersTotalCount(finalCount);
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        // ignore
+      } else {
+        console.error("fetchUsersPage unexpected:", err);
+      }
+    } finally {
+      setUsersLoading(false);
+      usersAbortRef.current = null;
     }
   }
 
@@ -166,7 +339,7 @@ export default function AdminPage() {
 
   // add a topic to the create-course local list
   function addTopicLocal(e) {
-    e?.preventDefault?.();
+    e?.preventDefault();
     const t = (topicInput || "").trim();
     if (!t) return;
     if (courseTopics.length >= 10) {
@@ -195,7 +368,6 @@ export default function AdminPage() {
       const payload = {
         title: courseTitle,
         slug: courseSlug,
-        // include topics array (or null if empty)
         topics: (courseTopics && courseTopics.length) ? courseTopics.slice(0, 10) : null,
         description: courseDescription || null,
         course_type: courseType || null,
@@ -218,7 +390,7 @@ export default function AdminPage() {
       setCourseTopics([]); setTopicInput("");
       setEditingCourseId(null);
 
-      await loadAll();
+      await loadCountsAndLists();
     } catch (err) {
       console.error(err);
       setActionMsg({ type: "error", text: err.message || "Create/update course failed" });
@@ -231,9 +403,7 @@ export default function AdminPage() {
       const { error } = await supabase.from("courses").delete().eq("id", courseId);
       if (error) throw error;
       setActionMsg({ type: "success", text: "Course deleted" });
-      // reload lists
-      await loadAll();
-      // if we were editing this course, clear the form
+      await loadCountsAndLists();
       if (editingCourseId === courseId) {
         setEditingCourseId(null);
         setCourseTitle(""); setCourseSlug(""); setCourseDescription(""); setCourseTopics([]); setTopicInput("");
@@ -269,18 +439,15 @@ export default function AdminPage() {
 
     if (!probTitle || !probPlatform) return setActionMsg({ type: "error", text: "Title and platform required" });
 
-    // If the user provided a link-like value, ensure it is a valid URL (basic)
     if (probLink && !isValidUrl(probLink)) {
       return setActionMsg({ type: "error", text: "Problem link looks invalid. Use a full URL (https://...)" });
     }
 
     if (probVideo && !isValidUrl(probVideo) && probVideo.trim() !== "") {
-      // allow empty string or plain text, but if it looks like a link it should be valid
       return setActionMsg({ type: "error", text: "Video solution looks like a URL but it's invalid. Use full URL (https://...)" });
     }
 
     try {
-      // Preferred attempt: insert with video_solution and text_solution
       const payload = {
         title: probTitle,
         platform: probPlatform,
@@ -291,7 +458,6 @@ export default function AdminPage() {
         text_solution: probText && String(probText).trim() ? String(probText).trim() : null,
       };
 
-      // Try insert with the preferred columns first
       const { data: newProb, error } = await supabase
         .from("problems")
         .insert([payload])
@@ -299,7 +465,6 @@ export default function AdminPage() {
         .single();
 
       if (error) {
-        // If insertion failed due to unknown columns (schema mismatch), fallback to older `solution` column
         console.warn("Preferred insert failed, will try fallback:", error);
         const fallbackPayload = {
           title: probTitle,
@@ -317,7 +482,6 @@ export default function AdminPage() {
           .single();
 
         if (err2) throw err2;
-        // attach to course_problems if applicable
         if (selectedCourseId) {
           const { error: cpErr } = await supabase.from("course_problems").insert([{
             course_id: selectedCourseId,
@@ -326,15 +490,13 @@ export default function AdminPage() {
           if (cpErr) throw cpErr;
         }
 
-        // success fallback
         setProbTitle(""); setProbLink(""); setProbDifficulty("easy"); setSelectedCourseId("");
         setProbVideo(""); setProbText("");
-        await loadAll();
+        await loadCountsAndLists();
         setActionMsg({ type: "success", text: "Problem added (fallback to legacy `solution` column)." });
         return;
       }
 
-      // success with preferred insert
       if (selectedCourseId) {
         const { error: cpErr } = await supabase.from("course_problems").insert([{
           course_id: selectedCourseId,
@@ -345,7 +507,7 @@ export default function AdminPage() {
 
       setProbTitle(""); setProbLink(""); setProbDifficulty("easy"); setSelectedCourseId("");
       setProbVideo(""); setProbText("");
-      await loadAll();
+      await loadCountsAndLists();
       setActionMsg({ type: "success", text: "Problem added" });
     } catch (err) {
       console.error(err);
@@ -375,123 +537,239 @@ export default function AdminPage() {
   // resolve allowed roles for current operator
   function getAllowedRolesForOperator() {
     const r = (profile?.role || "").toLowerCase();
-    if (r === "super_admin" || r === "admin") return ALL_ROLES;
+    if (r === "super_admin") return ALL_ROLES;
+    if (r === "admin") {
+      // admin can set roles strictly lower than admin
+      return ALL_ROLES.filter(role => (ROLE_RANK[role] ?? 0) < ROLE_RANK["admin"]);
+    }
     if (r === "moderator") return MODERATOR_ALLOWED;
     return ["user"];
   }
 
-  // attempt to find profile by email (best-effort)
-  async function findProfileByEmail(email) {
-    // first, try profiles.email column (if exists)
-    try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, email, role")
-        .ilike("email", email)
-        .limit(1);
+  // helper: check whether operator can change/upsert target -> desired
+  function canOperatorChangeTarget(operatorRole, targetRole, desiredRole, targetEmail) {
+    const op = (operatorRole || "user").toLowerCase();
+    const t = (targetRole || "user").toLowerCase();
+    const d = (desiredRole || "user").toLowerCase();
 
-      if (!error && data && data.length > 0) return data[0];
-    } catch (err) {
-      // ignore
+    // protect owner by email
+    if (targetEmail === OWNER_EMAIL) return { allowed: false, reason: "Cannot change owner role" };
+
+    const opRank = ROLE_RANK[op] ?? 0;
+    const tRank = ROLE_RANK[t] ?? 0;
+    const dRank = ROLE_RANK[d] ?? 0;
+
+    // operator must be strictly higher than target (can't change peers or seniors), except super_admin
+    if (!(op === "super_admin") && opRank <= tRank) {
+      return { allowed: false, reason: "You cannot change this user's role (target has equal or higher role)" };
     }
 
-    // fallback: try username eq local part
-    try {
-      const local = email.split("@")[0];
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, email, role")
-        .ilike("username", local)
-        .limit(1);
-
-      if (!error && data && data.length > 0) return data[0];
-    } catch (err) {
-      // ignore
+    // desired role must be lower than operator, except super_admin may create other super_admins
+    if (op !== "super_admin" && dRank >= opRank) {
+      return { allowed: false, reason: "You are not allowed to set that role" };
     }
 
-    return null;
+    // if op is super_admin, allow everything except owner (handled above)
+    return { allowed: true };
   }
 
-  // set role for a given profile id
+  // helper: whether operator is allowed to INSERT a new profiles row (we allow super_admins or users whose profile has is_admin true)
+  function operatorCanInsertProfile() {
+    if (!profile) return false;
+    if ((profile.role || "").toLowerCase() === "super_admin") return true;
+    if (profile.is_admin === true) return true; // existing admin-flagged user
+    return false;
+  }
+
+  // set role for a given profile id (used programmatically)
   async function setRoleForProfileId(profileId, role) {
     if (!profileId) return { error: "no profile id" };
     try {
+      // find target in current users list (best-effort)
+      const target = users.find(u => u.id === profileId) || null;
+      const targetRole = (target?.role || "user").toLowerCase();
+      const targetEmail = target?.email ?? null;
+      const hasProfile = !!(target?.has_profile === true);
+
+      if (profileId === profile.id) {
+        return { error: "You cannot change your own role" };
+      }
+
+      const check = canOperatorChangeTarget(profile.role, targetRole, role, targetEmail);
+      if (!check.allowed) return { error: check.reason || "Not allowed" };
+
+      // If target has no profile row, INSERT (via upsert) may be an INSERT and could violate RLS for some operators.
+      // Only proceed with upsert-insert if operator is allowed to create profile rows.
+      if (!hasProfile && !operatorCanInsertProfile()) {
+        return { error: "Cannot create profile for this user. Please ask a super_admin to create the profile first." };
+      }
+
       const { error } = await supabase.from("profiles").upsert({ id: profileId, role }, { onConflict: "id" });
       if (error) return { error };
-      // refresh users list
-      await loadAll();
+
+      // refresh users list (current page)
+      await fetchUsersPage({ page: usersPage, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
       return { ok: true };
     } catch (err) {
       return { error: err };
     }
   }
 
-  // set role by email (UI action)
-  async function handleSetRoleByEmail(e) {
-    e?.preventDefault();
-    setActionMsg(null);
-    const email = (roleEmail || "").trim().toLowerCase();
-    const desired = (roleToSet || "").toLowerCase();
-
-    if (!email || !desired) return setActionMsg({ type: "error", text: "Email and role required" });
-
-    // permission check: if current operator is moderator, restrict roles
-    const allowed = getAllowedRolesForOperator();
-    if (!allowed.includes(desired)) {
-      return setActionMsg({ type: "error", text: "You are not permitted to set that role" });
-    }
-
-    setActionMsg({ type: "info", text: "Searching user..." });
-
-    const found = await findProfileByEmail(email);
-    if (!found) {
-      return setActionMsg({ type: "error", text: "User not found in profiles. Make sure the user completed signup (profiles row exists)." });
-    }
-
-    // special: do not allow moderator to set someone to admin/super_admin
-    if (profile.role === "moderator" && !MODERATOR_ALLOWED.includes(desired)) {
-      return setActionMsg({ type: "error", text: "Moderators can only set premium or user roles." });
-    }
-
-    // prevent moderators from changing their own role to escalate (optional)
-    if (found.id === profile.id && profile.role !== "super_admin") {
-      return setActionMsg({ type: "error", text: "You cannot change your own role." });
-    }
-
-    // apply
-    setActionMsg({ type: "info", text: `Setting role ${desired} for ${found.display_name || found.username || found.email || found.id}...` });
-    const res = await setRoleForProfileId(found.id, desired);
-    if (res.error) {
-      console.error(res.error);
-      setActionMsg({ type: "error", text: "Failed to set role: " + (res.error.message || JSON.stringify(res.error)) });
-      return;
-    }
-
-    setActionMsg({ type: "success", text: `Role set to ${desired} for ${found.display_name || found.username || found.email || found.id}` });
-    setRoleEmail("");
-    setRoleToSet("user");
-  }
-
   // inline change from users list
   async function handleInlineSetRole(uId, desired) {
     setActionMsg(null);
-    const allowed = getAllowedRolesForOperator();
-    if (!allowed.includes(desired)) {
+
+    // find the target in current users array
+    const target = users.find(u => u.id === uId) || null;
+    const targetRole = (target?.role || "user").toLowerCase();
+    const targetEmail = target?.email ?? null;
+    const hasProfile = !!(target?.has_profile === true);
+
+    if (!target) {
+      setActionMsg({ type: "error", text: "Target user not found (refresh list)" });
+      return;
+    }
+
+    const allowedRoles = getAllowedRolesForOperator();
+    if (!allowedRoles.includes((desired || "user").toLowerCase()) && profile.role?.toLowerCase() !== "super_admin") {
       return setActionMsg({ type: "error", text: "Not allowed to set that role" });
     }
-    if (uId === profile.id && profile.role !== "super_admin") {
+
+    if (uId === profile.id) {
       return setActionMsg({ type: "error", text: "You cannot change your own role." });
     }
+
+    const check = canOperatorChangeTarget(profile.role, targetRole, desired, targetEmail);
+    if (!check.allowed) {
+      return setActionMsg({ type: "error", text: check.reason || "Not allowed" });
+    }
+
+    // If target has no profile row, disallow if operator cannot insert (avoid RLS INSERT error)
+    if (!hasProfile && !operatorCanInsertProfile()) {
+      return setActionMsg({ type: "error", text: "Cannot create profile for this user. Ask a super_admin to create the profile first." });
+    }
+
     try {
       const { error } = await supabase.from("profiles").upsert({ id: uId, role: desired }, { onConflict: "id" });
       if (error) throw error;
-      await loadAll();
+
+      // success: update local list to reflect new role and clear pending
+      setUsers(prev => prev.map(x => x.id === uId ? { ...x, role: desired, has_profile: true } : x));
+      setPendingRoles(prev => {
+        const c = { ...prev };
+        delete c[uId];
+        return c;
+      });
+
       setActionMsg({ type: "success", text: "Role updated" });
+      // optional: refresh page data
+      await fetchUsersPage({ page: usersPage, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
     } catch (err) {
       console.error(err);
       setActionMsg({ type: "error", text: err.message || "Failed to update role" });
     }
   }
+
+  /* ----------------- Block / Delete user (new) ----------------- */
+
+  // operator-level helpers
+  function isOperatorSuper() {
+    return (profile?.role || "").toLowerCase() === "super_admin";
+  }
+
+  function operatorCanActOnTarget(u) {
+    // used for block/delete: only super_admin allowed per DB trigger/policy
+    if (!profile) return false;
+    if (!u) return false;
+    // cannot act on owner or self
+    if (u.email === OWNER_EMAIL) return false;
+    if (u.id === profile.id) return false;
+    // only super_admin allowed (DB enforces this too)
+    return isOperatorSuper();
+  }
+
+  // toggle block/unblock
+  async function toggleBlock(uId, block) {
+    setActionMsg(null);
+    const target = users.find(u => u.id === uId) || null;
+    if (!target) {
+      setActionMsg({ type: "error", text: "User not found" });
+      return;
+    }
+    if (!operatorCanActOnTarget(target)) {
+      setActionMsg({ type: "error", text: "Not allowed to block/unblock this user" });
+      return;
+    }
+    if (!confirm(`${block ? "Block" : "Unblock"} user ${target.email || target.id}?`)) return;
+
+    try {
+      const { error } = await supabase.from("profiles").update({ is_blocked: block }).eq("id", uId);
+      if (error) throw error;
+
+      setUsers(prev => prev.map(u => u.id === uId ? { ...u, is_blocked: block, has_profile: true } : u));
+      setActionMsg({ type: "success", text: `User ${block ? "blocked" : "unblocked"}` });
+    } catch (err) {
+      console.error("toggleBlock err", err);
+      // If DB trigger refused (e.g., non-super_admin), surface message
+      const msg = err?.message || (err?.error_description || "Failed to update block status");
+      setActionMsg({ type: "error", text: msg });
+    }
+  }
+
+  // delete profile row (note: deleting auth.users requires server-side service role)
+  // delete profile + auth user (server-side)
+async function removeUser(uId) {
+  setActionMsg(null);
+  const target = users.find(u => u.id === uId) || null;
+  if (!target) {
+    setActionMsg({ type: "error", text: "User not found" });
+    return;
+  }
+  // same client-side checks as before
+  if (target.email === OWNER_EMAIL) {
+    setActionMsg({ type: "error", text: "You cannot remove the owner" });
+    return;
+  }
+  if (target.id === profile.id) {
+    setActionMsg({ type: "error", text: "You cannot remove your own account" });
+    return;
+  }
+  if (!confirm(`Permanently remove user ${target.email || target.id}? This will delete the Auth user and the profiles row.`)) return;
+
+  try {
+    // get current session token to authenticate the API call (must be super_admin)
+    const s = await supabase.auth.getSession();
+    const token = s?.data?.session?.access_token;
+    if (!token) {
+      setActionMsg({ type: "error", text: "Not signed in (no session token)" });
+      return;
+    }
+
+    const res = await fetch("/api/admin/delete-user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({ userId: uId }),
+    });
+
+    const json = await res.json();
+    if (!res.ok) {
+      const msg = (json && (json.error || json.message)) || `Delete failed (status ${res.status})`;
+      setActionMsg({ type: "error", text: msg });
+      return;
+    }
+
+    // success -> remove from local list
+    setUsers(prev => prev.filter(u => u.id !== uId));
+    setActionMsg({ type: "success", text: json.message || "User permanently removed." });
+  } catch (err) {
+    console.error("removeUser (permanent) error", err);
+    setActionMsg({ type: "error", text: err?.message || "Failed to remove user" });
+  }
+}
+
 
   /* ------------- Editing topics for existing courses ------------- */
 
@@ -572,7 +850,7 @@ export default function AdminPage() {
       const { error } = await supabase.from("courses").update({ topics: topicsToSave }).eq("id", courseId);
       if (error) throw error;
       setActionMsg({ type: "success", text: "Topics updated" });
-      await loadAll();
+      await loadCountsAndLists();
     } catch (err) {
       console.error(err);
       setActionMsg({ type: "error", text: err.message || "Save topics failed" });
@@ -584,6 +862,8 @@ export default function AdminPage() {
   if (loading) return <div className="p-6">Loading admin panel…</div>;
 
   // render
+  const usersPagesCount = Math.max(1, Math.ceil((usersTotalCount || 0) / usersPageSize));
+
   return (
     <div>
       <Head>
@@ -646,11 +926,9 @@ export default function AdminPage() {
                         <li key={i} style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ flex: 1, color: "var(--muted-2)" }}>{t}</span>
                           <button type="button" className="btn" onClick={() => {
-                            // quick inline edit using prompt to keep UI simple
                             const newVal = prompt("Edit topic", t);
                             if (newVal === null) return;
                             if (!newVal.trim()) {
-                              // if empty -> remove
                               if (!confirm("Remove this topic?")) return;
                               removeTopicLocal(i);
                             } else {
@@ -696,7 +974,6 @@ export default function AdminPage() {
                 <input value={probPlatform} onChange={e => setProbPlatform(e.target.value)} placeholder="Platform (Codeforces / SeriousOJ)" className="w-full p-2 field" />
                 <input value={probLink} onChange={e => setProbLink(e.target.value)} placeholder="Link (optional) — any site" className="w-full p-2 field" />
 
-                {/* Solution inputs: video + text */}
                 <div style={{ display: "flex", gap: 8 }}>
                   <input
                     value={probVideo}
@@ -709,18 +986,18 @@ export default function AdminPage() {
 
                 <textarea
                   value={probText}
-                  onChange={e => setProbText(e.target.value)}
+                  onChange={(e) => setProbText(e.target.value)}
                   placeholder="Text solution (paste explanation or a link) - optional"
                   className="w-full p-2 field"
                   rows={4}
                 />
 
-                <select value={probDifficulty} onChange={e => setProbDifficulty(e.target.value)} className="w-full p-2 field">
+                <select value={probDifficulty} onChange={(e) => setProbDifficulty(e.target.value)} className="w-full p-2 field">
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
                 </select>
-                <select value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)} className="w-full p-2 field">
+                <select value={selectedCourseId} onChange={(e) => setSelectedCourseId(e.target.value)} className="w-full p-2 field">
                   <option value="">— attach to course (optional) —</option>
                   {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
                 </select>
@@ -750,32 +1027,13 @@ export default function AdminPage() {
               </form>
             </div>
 
-            <div className="card p-4 hover-card">
-              <h3 className="card-title">Set Role (by email)</h3>
-              <div className="space-y-2">
-                <form onSubmit={handleSetRoleByEmail}>
-                  <input value={roleEmail} onChange={e => setRoleEmail(e.target.value)} placeholder="user@example.com" className="w-full p-2 field" />
-                  <select value={roleToSet} onChange={e => setRoleToSet(e.target.value)} className="w-full p-2 field">
-                    {getAllowedRolesForOperator().map(r => (
-                      <option key={r} value={r} disabled={profile.role === "moderator" && !MODERATOR_ALLOWED.includes(r)}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                    <button className="btn btn-cyan" type="submit">Set Role</button>
-                    <button className="btn" type="button" onClick={() => { setRoleEmail(""); setRoleToSet("user"); }}>Clear</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-
+            {/* NOTE: Set-by-email removed — inline user list handles role changes now */}
             <div className="card p-4 hover-card">
               <h3 className="card-title">Quick Stats</h3>
               <div style={{ color: "var(--muted-2)", textAlign: "center" }}>
                 <div>Courses: <strong style={{ color: "white" }}>{courses.length}</strong></div>
                 <div>Problems: <strong style={{ color: "white" }}>{problems.length}</strong></div>
-                <div>Profiles: <strong style={{ color: "white" }}>{users.length}</strong></div>
+                <div>Profiles (page): <strong style={{ color: "white" }}>{users.length}</strong></div>
                 <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted-2)" }}>Logged in as <strong style={{ color: "white" }}>{profile.display_name || profile.username}</strong> ({profile.role})</div>
               </div>
             </div>
@@ -803,7 +1061,6 @@ export default function AdminPage() {
                         <span style={{ marginLeft: 12, color: 'var(--muted-2)', fontSize: 12 }}>{c.weeks ? `${c.weeks} wk(s)` : ''}</span>
                       </div>
 
-                      {/* topics display or editor */}
                       {!editing ? (
                         <>
                           {Array.isArray(c.topics) && c.topics.length > 0 ? (
@@ -868,48 +1125,152 @@ export default function AdminPage() {
           {/* USERS LIST (role management) */}
           <section className="mb-6">
             <h3 className="centered-h">Users (set role inline)</h3>
+
+            {/* Search & filters */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+              <input
+                placeholder="Search by name / username / email..."
+                className="p-2 field"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <select className="p-2 field" value={userRoleFilter} onChange={(e) => setUserRoleFilter(e.target.value)}>
+                {rolesForFilter.map(r => <option key={r} value={r}>{r === "all" ? "All roles" : r}</option>)}
+              </select>
+
+              <select className="p-2 field" value={usersPageSize} onChange={(e) => { setUsersPageSize(Number(e.target.value)); setUsersPage(1); }}>
+                {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+              </select>
+            </div>
+
             <div className="space-y-2">
-              {users.map(u => (
-                <div key={u.id} className="user-row">
-                  <div style={{ flex: 1 }}>
-                    <div className="user-name">{u.display_name || u.username || u.email || u.id}</div>
-                    <div className="user-sub">{u.email || ""}</div>
-                  </div>
+              {usersLoading ? (
+                <div style={{ padding: 12, color: "var(--muted-2)" }}>Loading users…</div>
+              ) : users.length === 0 ? (
+                <div style={{ padding: 12, color: "var(--muted-2)" }}>No users found.</div>
+              ) : users.map(u => {
+                const targetRole = (u.role || "user").toLowerCase();
+                const opRank = ROLE_RANK[(profile.role || "user").toLowerCase()] ?? 0;
+                const targetRank = ROLE_RANK[targetRole] ?? 0;
+                const allowedRoles = getAllowedRolesForOperator();
 
-                  <div style={{ minWidth: 180 }}>
-                    <select
-                      value={u.role || "user"}
-                      onChange={(e) => {
-                        // optimistic local update; actual save happens on click Save
-                        setUsers(prev => prev.map(x => x.id === u.id ? { ...x, role: e.target.value } : x));
-                      }}
-                      className="p-2 field"
-                    >
-                      {getAllowedRolesForOperator().map(r => (
-                        <option
-                          key={r}
-                          value={r}
-                          disabled={profile.role === "moderator" && !MODERATOR_ALLOWED.includes(r)}
+                // whether current operator can change this user's role at all
+                const cannotChangeTarget = (u.id === profile.id) // can't change yourself
+                  || (u.email === OWNER_EMAIL) // can't change owner
+                  || (profile.role?.toLowerCase() !== "super_admin" && opRank <= targetRank); // can't change equal/higher
+
+                // show select's value from pendingRoles if present, else DB value
+                const currentSelectValue = pendingRoles[u.id] ?? (u.role || "user");
+
+                // If this user has no profiles row and operator can't insert, prevent Save
+                const insertingNotAllowed = !u.has_profile && !operatorCanInsertProfile();
+
+                // block/delete permissions
+                const canBlockOrDelete = operatorCanActOnTarget(u);
+
+                return (
+                  <div key={u.id} className="user-row">
+                    <div style={{ flex: 1 }}>
+                      <div className="user-name">
+                        {u.display_name || u.username || u.email || u.id}
+                        {!u.has_profile ? <span style={{ marginLeft: 8, color: "#f59e0b", fontSize: 12 }}>(no profile)</span> : null}
+                        {u.is_blocked ? <span style={{ marginLeft: 8, background: "#fecaca", color: "#7f1d1d", padding: "2px 6px", borderRadius: 6, fontSize: 12 }}>blocked</span> : null}
+                      </div>
+                      <div className="user-sub">{u.email || ""}</div>
+                    </div>
+
+                    <div style={{ minWidth: 220 }}>
+                      <select
+                        value={currentSelectValue}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          // store pending change (do not mutate u.role directly)
+                          setPendingRoles(prev => ({ ...prev, [u.id]: val }));
+                        }}
+                        className="p-2 field"
+                        disabled={cannotChangeTarget}
+                      >
+                        {/* Always show the user's current role as an option so select has consistent display —
+                            then add allowed roles as choices. */}
+                        <option value={u.role || "user"}>{u.role || "user"}</option>
+                        {allowedRoles.map(r => {
+                          // don't duplicate current
+                          if (r === (u.role || "user")) return null;
+                          // extra safety: moderators/admins should not see options >= their rank
+                          const rRank = ROLE_RANK[r] ?? 0;
+                          if (profile.role?.toLowerCase() !== "super_admin" && rRank >= (ROLE_RANK[(profile.role||"user").toLowerCase()] ?? 0)) {
+                            return null;
+                          }
+                          return <option key={r} value={r}>{r}</option>;
+                        })}
+                      </select>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        className="btn btn-cyan"
+                        onClick={() => {
+                          // determine desired (pending or current)
+                          const desired = pendingRoles[u.id] ?? (u.role || "user");
+                          handleInlineSetRole(u.id, desired);
+                        }}
+                        disabled={
+                          // disable when no pending change or cannot change
+                          cannotChangeTarget ||
+                          ((pendingRoles[u.id] ?? (u.role || "user")) === (u.role || "user")) ||
+                          insertingNotAllowed
+                        }
+                        title={cannotChangeTarget ? "You cannot change this user's role" : (u.id === profile.id ? "You cannot change your own role" : insertingNotAllowed ? "Cannot create profile for this user (ask super_admin)" : "Save role")}
+                      >
+                        Save
+                      </button>
+
+                      {/* Block / Unblock button (visible only to super_admin) */}
+                      {isOperatorSuper() ? (
+                        <button
+                          className="btn"
+                          onClick={() => toggleBlock(u.id, !u.is_blocked)}
+                          disabled={!canBlockOrDelete}
+                          title={!canBlockOrDelete ? "You cannot block/unblock this user" : (u.is_blocked ? "Unblock user" : "Block user")}
+                          style={{ background: u.is_blocked ? "rgba(34,197,94,0.12)" : "rgba(244,63,94,0.08)", color: u.is_blocked ? "#bbf7d0" : "#fecaca", borderColor: "rgba(255,255,255,0.04)" }}
                         >
-                          {r}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                          {u.is_blocked ? "Unblock" : "Block"}
+                        </button>
+                      ) : null}
 
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      className="btn btn-cyan"
-                      onClick={() => handleInlineSetRole(u.id, (u.role || "user"))}
-                      disabled={u.id === profile.id}
-                      title={u.id === profile.id ? "You cannot change your own role" : "Save role"}
-                    >
-                      Save
-                    </button>
-                    <a href={`/profiles/${encodeURIComponent(u.id)}`} className="btn view-btn">View</a>
+                      {/* Delete (profiles row) — super_admin only */}
+                      {isOperatorSuper() ? (
+                        <button
+                          className="btn"
+                          onClick={() => removeUser(u.id)}
+                          disabled={!canBlockOrDelete}
+                          title={!canBlockOrDelete ? "You cannot remove this user" : "Permanently remove profile row"}
+                          style={{ background: "rgba(255,255,255,0.02)", color: "#fff" }}
+                        >
+                          Delete
+                        </button>
+                      ) : null}
+
+                      <a href={`/profiles/${encodeURIComponent(u.id)}`} className="btn view-btn">View</a>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+
+            {/* pagination controls */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+              <div style={{ color: "var(--muted-2)" }}>
+                Showing page {usersPage} of {usersPagesCount} — <strong>{usersTotalCount}</strong> total
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn" onClick={() => { setUsersPage(1); }} disabled={usersPage <= 1}>« First</button>
+                <button className="btn" onClick={() => setUsersPage(p => Math.max(1, p - 1))} disabled={usersPage <= 1}>‹ Prev</button>
+                <button className="btn" onClick={() => setUsersPage(p => Math.min(usersPagesCount, p + 1))} disabled={usersPage >= usersPagesCount}>Next ›</button>
+                <button className="btn" onClick={() => setUsersPage(usersPagesCount)} disabled={usersPage >= usersPagesCount}>Last »</button>
+              </div>
             </div>
           </section>
 
@@ -932,7 +1293,7 @@ export default function AdminPage() {
                         const { error } = await supabase.from("problems").delete().eq("id", p.id);
                         if (error) return setActionMsg({ type: "error", text: "Delete failed: " + error.message });
                         setActionMsg({ type: "success", text: "Problem deleted" });
-                        await loadAll();
+                        await loadCountsAndLists();
                       }}
                     >Delete</button>
                   </div>
@@ -976,7 +1337,7 @@ export default function AdminPage() {
         .btn-cyan { background: rgba(0,210,255,0.06); color: #002; border: 1px solid rgba(0,210,255,0.18); }
         .view-btn { padding: 8px 10px; background: rgba(255,255,255,0.02); color: white; border: 1px solid rgba(255,255,255,0.04); }
 
-        /* make inputs/selects readable (fixes difficulty / role visibility) */
+        /* make inputs/selects readable */
         .field {
           color: #001;
           background: #f8fafc;
