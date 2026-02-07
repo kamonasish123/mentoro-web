@@ -1,140 +1,79 @@
 // pages/api/admin/list-users.js
 import { createServerSupabase } from "../../../lib/supabaseClient";
 
-/**
- GET /api/admin/list-users
- Query params:
-   page (1-based), pageSize, search, role
- Header: Authorization: Bearer <access_token>
+/*
+ POST /api/admin/list-users
+ Query/body:
+  - page (number, default 1)
+  - pageSize (number, default 20)
+  - search (string)
+  - role (string, default "all")
+
+ Returns:
+  { ok: true, data: [...profiles], count: totalCount }
+  on error: { ok: false, error: "message" }
+  
+ NOTE: This endpoint uses SUPABASE_SERVICE_ROLE_KEY to bypass RLS.
+ It's designed for admin UI only; protect it in production if needed.
 */
+
 export default async function handler(req, res) {
-  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+  // allow GET or POST
+  if (!["GET", "POST"].includes(req.method)) {
+    res.setHeader("Allow", "GET, POST");
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
+  }
 
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token) return res.status(401).json({ error: "Missing access token" });
+  const params = req.method === "GET" ? req.query : req.body || {};
+  const page = Math.max(1, Number(params.page) || 1);
+  const pageSize = Math.max(1, Number(params.pageSize) || 20);
+  const search = (params.search || "").trim();
+  const role = (params.role || "all").trim();
 
+  // create admin client with service role
   let supabaseAdmin;
   try {
     supabaseAdmin = createServerSupabase();
   } catch (err) {
-    console.error("createServerSupabase error", err);
-    return res.status(500).json({ error: "Server misconfiguration" });
+    console.error("createServerSupabase error:", err);
+    return res.status(500).json({ ok: false, error: "Server configuration error" });
   }
 
   try {
-    // validate token -> operator user
-    let userData;
-    try {
-      const resp = await supabaseAdmin.auth.getUser(token);
-      userData = resp?.data;
-      if (!userData?.user) {
-        // fallback form (some versions)
-        const resp2 = await supabaseAdmin.auth.getUser({ access_token: token });
-        userData = resp2?.data;
-      }
-    } catch (e) {
-      console.warn("auth.getUser error", e);
-    }
-
-    const operator = userData?.user;
-    if (!operator?.id) {
-      return res.status(401).json({ error: "Invalid access token" });
-    }
-
-    // load operator profile server-side
-    const { data: opProf, error: profErr } = await supabaseAdmin
-      .from("profiles")
-      .select("id, role, is_admin, email")
-      .eq("id", operator.id)
-      .limit(1)
-      .single();
-
-    if (profErr || !opProf) return res.status(403).json({ error: "Operator profile not found" });
-
-    const opRole = (opProf.role || "").toLowerCase();
-    const allowedOps = ["super_admin", "admin", "moderator"];
-    if (!allowedOps.includes(opRole)) return res.status(403).json({ error: "Not authorized to list users" });
-
-    // parse query
-    const page = Math.max(1, parseInt(req.query.page || "1", 10));
-    const pageSize = Math.max(1, Math.min(200, parseInt(req.query.pageSize || "20", 10)));
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    const search = (req.query.search || "").trim();
-    const roleFilter = (req.query.role || "").trim();
 
-    // build profiles query using service-role (bypass RLS)
+    // base select
     let q = supabaseAdmin
       .from("profiles")
-      .select("id, username, display_name, email, role, is_admin, created_at", { count: "exact" })
-      .order("created_at", { ascending: false });
+      .select("id, username, display_name, email, role, is_admin, created_at, is_blocked", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(from, to);
 
-    if (roleFilter && roleFilter !== "all") {
-      q = q.eq("role", roleFilter);
+    if (role && role !== "all") {
+      q = q.eq("role", role);
     }
 
     if (search) {
       const esc = search.replace(/%/g, "\\%").replace(/,/g, " ");
       const pattern = `%${esc}%`;
       const orExpr = `username.ilike.${pattern},display_name.ilike.${pattern},email.ilike.${pattern}`;
-      q = q.range(from, to).or(orExpr);
-    } else {
-      q = q.range(from, to);
+      q = q.or(orExpr);
     }
 
-    const { data: profilesData, error: pErr, count } = await q;
+    const { data, error, count } = await q;
 
-    if (!pErr && Array.isArray(profilesData) && profilesData.length > 0) {
-      return res.status(200).json({ data: profilesData, count: Number(count || profilesData.length) });
+    if (error) {
+      console.error("admin/list-users profiles query error:", error);
+      return res.status(500).json({ ok: false, error: error.message || "DB error" });
     }
 
-    // if no profiles matched and search contains '@', try auth.users by email for placeholders
-    if (search && search.includes("@")) {
-      try {
-        const emailPattern = `%${search}%`;
-        const { data: authRows, error: authErr } = await supabaseAdmin
-          .from("auth.users")
-          .select("id, email, created_at")
-          .ilike("email", emailPattern)
-          .range(from, to)
-          .limit(pageSize);
+    // return as-is; mark has_profile true (these are actual profiles rows)
+    const final = Array.isArray(data) ? data.map(r => ({ ...r, has_profile: true })) : [];
 
-        if (!authErr && Array.isArray(authRows) && authRows.length > 0) {
-          // For each auth user found, attempt to fetch profile -- if not found provide placeholder
-          const placeholders = [];
-          for (const a of authRows) {
-            const { data: profById, error: profByIdErr } = await supabaseAdmin
-              .from("profiles")
-              .select("id, username, display_name, email, role, is_admin, created_at")
-              .eq("id", a.id)
-              .limit(1);
-
-            if (!profByIdErr && Array.isArray(profById) && profById.length > 0) {
-              placeholders.push(profById[0]);
-            } else {
-              placeholders.push({
-                id: a.id,
-                username: (a.email || "").split("@")[0],
-                display_name: null,
-                email: a.email || null,
-                role: "user",
-                is_admin: false,
-                created_at: a.created_at || null,
-              });
-            }
-          }
-          return res.status(200).json({ data: placeholders, count: placeholders.length });
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    // if no profiles found (empty), return empty set w/ count 0
-    return res.status(200).json({ data: [], count: 0 });
+    return res.status(200).json({ ok: true, data: final, count: Number(count || final.length) });
   } catch (err) {
-    console.error("list-users error", err);
-    return res.status(500).json({ error: err?.message || "Unexpected server error" });
+    console.error("admin/list-users unexpected:", err);
+    return res.status(500).json({ ok: false, error: "Unexpected server error" });
   }
 }

@@ -6,6 +6,29 @@ import { supabase } from "../lib/supabaseClient";
 
 const SUPPORT_EMAIL = "rkamonasish@gmail.com"; // used in blocked message
 
+// helper: extract a usable URL string from server payloads that may return
+// action_link as either a string or an object { properties: { action_link: "..." }, ... }
+function extractActionLink(payload) {
+  if (!payload) return null;
+  // normalize common locations
+  const a = payload.action_link ?? payload.actionLink ?? payload.actionlink ?? null;
+  if (!a) return null;
+  if (typeof a === "string") return a;
+  if (typeof a === "object") {
+    // try common shapes:
+    return (
+      a.properties?.action_link ??
+      a.action_link ??
+      a.actionLink ??
+      a.url ??
+      // sometimes services return nested { action_link: { action_link: "..." } }
+      (typeof a === "object" && a?.action_link?.properties?.action_link) ??
+      null
+    );
+  }
+  return null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -14,9 +37,18 @@ export default function LoginPage() {
   const [message, setMessage] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
 
+  // resend / reset UI state
+  const [resendAvailable, setResendAvailable] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  // used for both "resend confirmation" responses and "reset link" debug info
+  // ensure link is always a string when present
+  const [resendMsg, setResendMsg] = useState(null);
+
   async function handleEmailLogin(e) {
     e?.preventDefault();
     setMessage(null);
+    setResendAvailable(false);
+    setResendMsg(null);
 
     if (!email || !password) {
       setMessage({ type: "error", text: "Email and password required." });
@@ -32,7 +64,13 @@ export default function LoginPage() {
       });
 
       if (error) {
+        // Detect common unconfirmed / confirmation related messages and show resend UI
+        const emsg = String(error.message || "").toLowerCase();
+        const isConfirmRelated = emsg.includes("confirm") || emsg.includes("confirmed") || emsg.includes("verification") || emsg.includes("verify");
         setMessage({ type: "error", text: error.message || "Login failed." });
+        if (isConfirmRelated) {
+          setResendAvailable(true);
+        }
         return;
       }
 
@@ -76,8 +114,6 @@ export default function LoginPage() {
           }
           setMessage({
             type: "error",
-            // show mailto link in message text field (simple HTML won't be rendered here),
-            // so include plain text instruction and clickable mailto below.
             text: "Your account has been blocked. Contact administration to restore access."
           });
           return;
@@ -93,7 +129,10 @@ export default function LoginPage() {
       router.replace("/");
     } catch (err) {
       console.error("login error", err);
+      const emsg = String(err?.message || "").toLowerCase();
+      const isConfirmRelated = emsg.includes("confirm") || emsg.includes("confirmed") || emsg.includes("verification") || emsg.includes("verify");
       setMessage({ type: "error", text: err?.message || "Unexpected error" });
+      if (isConfirmRelated) setResendAvailable(true);
     } finally {
       setLoading(false);
     }
@@ -119,6 +158,101 @@ export default function LoginPage() {
       console.error("google login err", err);
       setMessage({ type: "error", text: "Unexpected error" });
       setLoading(false);
+    }
+  }
+
+  // NEW: Forgot password handler
+  async function handleForgotPassword(e) {
+    e?.preventDefault?.();
+    setMessage(null);
+    setResendMsg(null);
+
+    const trimmed = String(email || "").trim().toLowerCase();
+    if (!trimmed) {
+      setMessage({ type: "error", text: "Please enter your email to receive a password reset link." });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Call server-side endpoint which uses the service role to generate a link
+      const resp = await fetch("/api/send-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed }),
+      });
+
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        // fallback: try client-side reset (gives GoTrue error if any)
+        console.warn("send-reset failed:", payload);
+        const { data, error } = await supabase.auth.resetPasswordForEmail(trimmed, {
+          redirectTo: process.env.NEXT_PUBLIC_SITE_URL || undefined,
+        });
+
+        if (error) {
+          // show helpful text & encourage server log check
+          setMessage({ type: "error", text: error.message || "Failed to send reset email. Check server SMTP settings & logs." });
+        } else {
+          setMessage({ type: "success", text: "Password reset requested — check your email." });
+        }
+      } else {
+        // server succeeded
+        const link = extractActionLink(payload);
+        if (link) {
+          // helpful in dev so you can click the link if email doesn't arrive
+          setResendMsg({
+            type: "success",
+            text: "Reset link generated. (Dev: link shown below so you can finish reset while debugging SMTP.)",
+            link,
+          });
+          setMessage({ type: "success", text: "Password reset requested — check your email." });
+        } else {
+          setMessage({ type: "success", text: "Password reset requested — check your email." });
+          setResendMsg({ type: "success", text: payload.info || "Reset request sent." });
+        }
+      }
+    } catch (err) {
+      console.error("forgot password error:", err);
+      setMessage({ type: "error", text: "Unexpected error while requesting reset. Check server logs." });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // NEW: Resend confirmation (calls server endpoint same as signup page)
+  async function handleResendConfirmation() {
+    setResendMsg(null);
+
+    const trimmed = String(email || "").trim().toLowerCase();
+    if (!trimmed) {
+      setResendMsg({ type: "error", text: "Enter your email in the form above first." });
+      return;
+    }
+
+    setResendLoading(true);
+    try {
+      const res = await fetch("/api/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResendMsg({ type: "error", text: payload?.error || `Resend failed (${res.status})` });
+      } else {
+        const link = extractActionLink(payload);
+        if (link && process.env.NODE_ENV === "development") {
+          setResendMsg({ type: "success", text: "Confirmation link generated (dev).", link });
+        } else {
+          setResendMsg({ type: "success", text: "Confirmation email resent — check your inbox." });
+        }
+      }
+    } catch (err) {
+      console.error("resend-confirmation error:", err);
+      setResendMsg({ type: "error", text: "Network/server error while resending confirmation." });
+    } finally {
+      setResendLoading(false);
     }
   }
 
@@ -209,6 +343,9 @@ export default function LoginPage() {
         .blocked-note { margin-top: 8px; color: #ffd7d7; font-weight: 700; text-align: center; }
         .blocked-contact { margin-top: 6px; text-align: center; font-size: 0.95rem; color: #ffd7d7; }
         .blocked-contact a { color: #fff; text-decoration: underline; }
+
+        .resend-row { display:flex; justify-content:center; gap:8px; margin-top:8px; }
+        .resend-msg { text-align:center; margin-top:6px; font-size:13px; }
       `}</style>
 
       <main className="min-h-screen flex items-center justify-center p-6">
@@ -272,6 +409,19 @@ export default function LoginPage() {
                   {showPassword ? "Hide" : "Show"}
                 </button>
               </div>
+
+              {/* NEW: Forgot password link (keeps layout minimal and doesn't change anything else) */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  className="btn"
+                  disabled={loading}
+                  style={{ background: "transparent", border: "none", padding: "0.2rem 0.4rem", color: "var(--muted-2)", fontWeight: 600 }}
+                >
+                  Forgot password?
+                </button>
+              </div>
             </div>
 
             <div style={{ marginTop: 6 }}>
@@ -313,6 +463,37 @@ export default function LoginPage() {
                   <div className="blocked-contact">
                     <a href={`mailto:${SUPPORT_EMAIL}`}>Email: {SUPPORT_EMAIL}</a>
                   </div>
+                </>
+              )}
+
+              {/* Dev: If server returned an action link (reset link), expose it in development so you can finish testing */}
+              {resendMsg && resendMsg.link && process.env.NODE_ENV === "development" && (
+                <div style={{ marginTop: 8, textAlign: "center" }}>
+                  <div style={{ fontSize: 13, color: "#34D399" }}>{resendMsg.text || "Dev: action link generated"}</div>
+                  <a href={resendMsg.link} target="_blank" rel="noreferrer" style={{ wordBreak: "break-all", color: "#00d2ff" }}>
+                    {resendMsg.link}
+                  </a>
+                </div>
+              )}
+
+              {/* Resend confirmation UI: appears when login error suggests email not confirmed */}
+              {(resendAvailable || (message.type === "error" && message.text && message.text.toLowerCase().includes("confirm"))) && (
+                <>
+                  <div className="resend-row">
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleResendConfirmation}
+                      disabled={resendLoading}
+                    >
+                      {resendLoading ? "Resending…" : "Resend confirmation email"}
+                    </button>
+                  </div>
+                  {resendMsg && !resendMsg.link && (
+                    <div className="resend-msg" style={{ color: resendMsg.type === "error" ? "#FB7185" : "#34D399" }}>
+                      {resendMsg.text}
+                    </div>
+                  )}
                 </>
               )}
             </div>

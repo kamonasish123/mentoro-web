@@ -6,7 +6,14 @@ import { supabase } from "../lib/supabaseClient";
 
 /*
   Signup page — stores full name in auth metadata and upserts profiles.display_name / profiles.full_name
+  Improvements:
+   - pre-check email via /api/check-email to show "email already has an account"
+   - show clear message when email confirmation is required
+   - only upsert profiles row when user object + session indicate authenticated
+   - add handling so we DO NOT redirect when email confirmation is required
+   - show resend confirmation button when account exists but email not confirmed (immediate UI)
 */
+
 export default function SignupPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
@@ -16,11 +23,17 @@ export default function SignupPage() {
   const [message, setMessage] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
 
+  // resend UI state
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMsg, setResendMsg] = useState(null);
+
+  // whether we should show the "Resend confirmation" button immediately
+  const [canResend, setCanResend] = useState(false);
+
   // create or update profile row for a given user object and provided name
   async function createProfileIfNeeded(user, name) {
     if (!user) return;
     try {
-      // create a sane username fallback from email or full name
       const usernameFromEmail = user.email ? user.email.split("@")[0] : "";
       const usernameFromName =
         name
@@ -32,12 +45,12 @@ export default function SignupPage() {
           : "";
       const username = usernameFromEmail || usernameFromName || user.id;
 
-      // upsert profile row with display_name and full_name and email
       await supabase.from("profiles").upsert(
         {
           id: user.id,
           username,
           email: user.email || null,
+          // prefer explicit 'name' passed in; fallback to metadata or username
           display_name: name || user.user_metadata?.full_name || username,
           full_name: name || user.user_metadata?.full_name || null,
           is_admin: false,
@@ -45,13 +58,42 @@ export default function SignupPage() {
         { onConflict: "id" }
       );
     } catch (err) {
+      // Fail silently but log so you can inspect in console
       console.warn("profile upsert failed", err?.message || err);
+    }
+  }
+
+  // call your API route to check if email already exists (auth.users or profiles)
+  // Expecting server to return JSON: { ok?: true, exists: boolean, confirmed?: boolean, error?: string }
+  async function checkEmailExists(emailToCheck) {
+    try {
+      const res = await fetch("/api/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailToCheck }),
+      });
+      if (!res.ok) {
+        console.warn("check-email returned non-OK:", await res.text());
+        return { ok: false, exists: false, confirmed: undefined, error: "Could not verify email availability. Try again later." };
+      }
+      const payload = await res.json();
+      // normalize
+      return {
+        ok: true,
+        exists: !!payload.exists,
+        confirmed: payload.confirmed === true ? true : (payload.confirmed === false ? false : undefined),
+      };
+    } catch (err) {
+      console.error("check-email fetch error:", err);
+      return { ok: false, exists: false, confirmed: undefined, error: "Could not verify email availability. Try again later." };
     }
   }
 
   async function handleEmailSignup(e) {
     e?.preventDefault();
     setMessage(null);
+    setResendMsg(null);
+    setCanResend(false);
 
     if (!fullName || !email || !password) {
       setMessage({ type: "error", text: "Full name, email and password are required." });
@@ -60,47 +102,156 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
-      // include full_name in auth user metadata so we can backfill / reference it later
-      const { data, error } = await supabase.auth.signUp(
-        { email, password },
-        { data: { full_name: fullName } }
-      );
+      const trimmedEmail = String(email).trim().toLowerCase();
 
-      if (error) {
-        setMessage({ type: "error", text: error.message });
+      // 1) pre-check email availability (server should indicate if it's unconfirmed)
+      const check = await checkEmailExists(trimmedEmail);
+      if (!check.ok) {
+        setMessage({ type: "error", text: check.error || "Could not verify email availability. Try again later." });
         setLoading(false);
         return;
       }
 
-      // try to get the created user (may be null if email confirmation required)
-      const { data: current } = await supabase.auth.getUser();
-      const user = current?.user ?? data?.user ?? null;
+      if (check.exists) {
+        // If server explicitly told us this account exists but is NOT confirmed -> show resend UI immediately
+        if (check.confirmed === false) {
+          setMessage({
+            type: "success",
+            text: "An account already exists for this email but it is not confirmed. Please check your email to confirm or resend confirmation."
+          });
+          setCanResend(true);
+          setLoading(false);
+          return;
+        }
 
-      // Upsert profile if we have a user id (works for immediate signups).
-      // If the signup requires email confirmation and the user object is not present,
-      // the profile will be created later when the user signs in (or you can backfill).
-      if (user) {
-        await createProfileIfNeeded(user, fullName);
-      } else {
-        // best-effort: if no user is present, we still attempted to store name in auth metadata above
-        // and can create profile later when user confirms / signs in.
+        // If confirmed is true -> normal "already registered" error
+        if (check.confirmed === true) {
+          setMessage({
+            type: "error",
+            text: "This email already has an account. If you forgot your password use 'Forgot password' or sign in."
+          });
+          setCanResend(false);
+          setLoading(false);
+          return;
+        }
+
+        // If server couldn't determine confirmed status, fallback to telling user account exists
+        setMessage({ type: "error", text: "This email already has an account." });
+        setCanResend(false);
+        setLoading(false);
+        return;
       }
 
+      // 2) proceed to sign up
+      // include full_name in auth metadata so it is available after confirmation
+      const { data, error } = await supabase.auth.signUp({
+  email: trimmedEmail,
+  password,
+  options: {
+    data: {
+      full_name: fullName
+    }
+  }
+});
+
+
+      if (error) {
+        // Handle race / existing user errors: detect email_exists robustly
+        console.error("supabase signUp error:", error);
+
+        const isAlreadyRegistered =
+          error?.code === "email_exists" ||
+          error?.status === 422 ||
+          (typeof error?.message === "string" && /already/i.test(error.message));
+
+        if (isAlreadyRegistered) {
+          // Re-check via server to determine confirmed state and show appropriate UI
+          const recheck = await checkEmailExists(trimmedEmail);
+          if (recheck.ok && recheck.exists && recheck.confirmed === false) {
+            setMessage({
+              type: "success",
+              text: "An account already exists for this email but it is not confirmed. Please check your email to confirm or resend confirmation."
+            });
+            setCanResend(true);
+            setLoading(false);
+            return;
+          }
+
+          // If confirmed => instruct to sign in or reset password
+          if (recheck.ok && recheck.exists && recheck.confirmed === true) {
+            setMessage({
+              type: "error",
+              text: "This email already has an account. Please sign in or use Forgot password to reset your password."
+            });
+            setCanResend(false);
+            setLoading(false);
+            return;
+          }
+
+          // Fallback: generic already-registered message
+          setMessage({ type: "error", text: "This email already has an account." });
+          setCanResend(false);
+          setLoading(false);
+          return;
+        }
+
+        // Generic error handling
+        setMessage({
+          type: "error",
+          text:
+            error?.message === "Failed to send confirmation email."
+              ? "Could not send confirmation email — check SMTP settings."
+              : error?.message || "Database error saving new user",
+        });
+        setCanResend(false);
+        setLoading(false);
+        return;
+      }
+
+      // signUp returns data which may include .user and possibly a .session
+      const signedUpUser = data?.user ?? null;
+      const session = data?.session ?? null;
+
+      // ---- NEW: Ensure profile upsert uses the fullName the user entered ----
+      // If we have a user object returned, attempt to create/upsert the profile using the provided fullName.
+      // This ensures display_name/full_name use what the user typed (avoiding the email-derived fallback).
+      if (signedUpUser) {
+        try {
+          // best-effort: if RLS prevents anon upsert this will fail silently (we log)
+          await createProfileIfNeeded(signedUpUser, fullName);
+        } catch (err) {
+          console.warn("createProfileIfNeeded after signup (best-effort) failed:", err);
+        }
+      }
+      // ---------------------------------------------------------------------
+
+      // Determine whether the user is actually authenticated already:
+      // - If a session exists => the user is signed in (no email confirmation required)
+      // - If session is null but user.email_confirmed_at exists => already confirmed
+      // Otherwise, email confirmation is required.
+      const emailConfirmed = !!(signedUpUser && signedUpUser.email_confirmed_at);
+
+      if (signedUpUser && (session || emailConfirmed)) {
+        // Authenticated — create profile and redirect (redundant but safe)
+        await createProfileIfNeeded(signedUpUser, fullName);
+        setMessage({ type: "success", text: "Signup successful — redirecting…" });
+        setCanResend(false);
+        // small delay so user sees message
+        setTimeout(() => (window.location.href = "/"), 800);
+        return;
+      }
+
+      // No session and not confirmed -> confirmation required. DO NOT redirect.
       setMessage({
         type: "success",
-        text:
-          data?.user
-            ? "Signup successful — redirecting…"
-            : "Signup requested. Check your email to confirm your account.",
+        text: "Signup requested. Check your email to confirm your account. You must confirm before logging in.",
       });
-
-      // if user is available (no confirmation required), redirect home
-      if (user) {
-        setTimeout(() => (window.location.href = "/"), 800);
-      }
+      setCanResend(true);
+      // do not create profile row until user confirms and signs in (we already attempted a best-effort upsert above)
     } catch (err) {
       console.error("signup error", err);
-      setMessage({ type: "error", text: "Unexpected error — see console." });
+      setMessage({ type: "error", text: "Unexpected error — check console & Supabase logs." });
+      setCanResend(false);
     } finally {
       setLoading(false);
     }
@@ -110,12 +261,11 @@ export default function SignupPage() {
     setMessage(null);
     setLoading(true);
     try {
-      // Redirect-based OAuth (Supabase will handle callback)
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
       });
       if (error) {
-        setMessage({ type: "error", text: error.message });
+        setMessage({ type: "error", text: error.message || "OAuth signup failed." });
       } else {
         setMessage({ type: "info", text: "Opening Google sign-in…" });
       }
@@ -125,6 +275,53 @@ export default function SignupPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Optional: resend confirmation (calls server endpoint /api/resend-confirmation if present)
+  async function handleResendConfirmation() {
+    if (!email) {
+      setResendMsg({ type: "error", text: "Enter your email in the form above first." });
+      return;
+    }
+    setResendLoading(true);
+    setResendMsg(null);
+    try {
+      const res = await fetch("/api/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: String(email).trim().toLowerCase() }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Show server-provided error if available; otherwise a friendly message
+        const text = payload?.error || payload?.message || `Resend failed (${res.status})`;
+        // If server returned an email_exists / 422, give clearer guidance
+        if (res.status === 422 || (payload && /email_exists/i.test(String(payload?.error || "")))) {
+          setResendMsg({
+            type: "error",
+            text: "That email already has an account — try signing in or resetting your password."
+          });
+        } else {
+          setResendMsg({ type: "error", text });
+        }
+      } else {
+        setResendMsg({ type: "success", text: "Confirmation email resent — check your inbox." });
+        setCanResend(true); // allow resend to stay visible after resending
+      }
+    } catch (err) {
+      console.error("resend-confirmation error:", err);
+      setResendMsg({ type: "error", text: "Network/server error while resending confirmation." });
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
+  // reset resend state when user edits the email input
+  function onEmailChange(v) {
+    setEmail(v);
+    setCanResend(false);
+    setResendMsg(null);
+    // do not clear success/error message automatically, user may want to read it
   }
 
   return (
@@ -210,6 +407,9 @@ export default function SignupPage() {
 
         .small-muted { color: var(--muted-2); font-size: 0.95rem; text-align: center; }
         .google-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
+
+        .resend-row { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; }
+        .msg { text-align: center; margin-top: 8px; font-size: 14px; }
       `}</style>
 
       <main className="min-h-screen flex items-center justify-center p-6">
@@ -256,7 +456,7 @@ export default function SignupPage() {
               <label className="small-muted" style={{ display: "block", marginBottom: 6 }}>Email</label>
               <input
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => onEmailChange(e.target.value)}
                 placeholder="you@example.com"
                 type="email"
                 required
@@ -316,6 +516,28 @@ export default function SignupPage() {
               >
                 {message.text}
               </div>
+
+              {/* show resend UI when signup required email confirmation or when pre-check finds unconfirmed account */}
+              {(canResend || (message.type === "success" && message.text && message.text.toLowerCase().includes("confirm"))) && (
+                <>
+                  <div className="resend-row">
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleResendConfirmation}
+                      disabled={resendLoading}
+                    >
+                      {resendLoading ? "Resending…" : "Resend confirmation email"}
+                    </button>
+                  </div>
+
+                  {resendMsg && (
+                    <div className="msg" style={{ color: resendMsg.type === "error" ? "#FB7185" : "#34D399" }}>
+                      {resendMsg.text}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </div>

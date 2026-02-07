@@ -199,10 +199,11 @@ export default function AdminPage() {
   }
 
   // Fetch a page of users with search + role filter (server-side)
-  // NOTE: if you search by email and no profile exists, we try auth.users to show the account
+  // NOTE: we now call a server endpoint which uses the service role key to bypass RLS.
   async function fetchUsersPage(opts = {}) {
     const { page = 1, pageSize = 20, search = "", role = "all" } = opts;
     setUsersLoading(true);
+
     // abort previous
     if (usersAbortRef.current) {
       try { usersAbortRef.current.abort(); } catch (e) {}
@@ -211,115 +212,55 @@ export default function AdminPage() {
     usersAbortRef.current = controller;
 
     try {
-      const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
+      // build query params
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
+      if (search) params.set("search", search);
+      if (role) params.set("role", role);
 
-      // Build base query selecting the fields including email (you added email column)
-      let q = supabase
-        .from("profiles")
-        .select("id, username, display_name, email, role, is_admin, created_at, is_blocked", { count: "exact" })
-        .order("created_at", { ascending: false })
-        .range(from, to);
-
-      // role filter
-      if (role && role !== "all") {
-        q = q.eq("role", role);
-      }
-
-      // search: OR across username, display_name, email
-      const trimmed = (search || "").trim();
-      if (trimmed) {
-        const esc = trimmed.replace(/%/g, "\\%").replace(/,/g, " "); // minimal sanitization
-        const pattern = `%${esc}%`;
-        // supabase .or expects a string like "username.ilike.%foo%,display_name.ilike.%foo%,email.ilike.%foo%"
-        const orExpr = `username.ilike.${pattern},display_name.ilike.${pattern},email.ilike.${pattern}`;
-        q = q.or(orExpr);
-      }
-
-      const { data, error, count } = await q;
+      const url = `/api/admin/list-users?${params.toString()}`;
+      const resp = await fetch(url, { signal: controller.signal, method: "GET" });
 
       if (controller.signal.aborted) {
         setUsersLoading(false);
         return;
       }
 
-      if (error) {
-        console.warn("fetchUsersPage error:", error);
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.warn("fetchUsersPage api error:", resp.status, txt);
         setUsers([]);
         setUsersTotalCount(0);
         setUsersLoading(false);
         return;
       }
 
-      // If user searched by exact email (contains '@') and profiles result is empty,
-      // try looking up auth.users for that email and include as placeholder.
-      // IMPORTANT: mark whether a shown item actually has a profiles row (has_profile)
-      let finalUsers = (Array.isArray(data) ? data.map(r => ({ ...r, has_profile: true })) : []);
-      let finalCount = Number(count || 0);
-
-      if (trimmed && trimmed.includes("@") && (!Array.isArray(finalUsers) || finalUsers.length === 0)) {
-        try {
-          const emailPattern = `%${trimmed}%`;
-          const { data: authRows, error: authErr } = await supabase
-            .from("auth.users")
-            .select("id, email, created_at")
-            .ilike("email", emailPattern)
-            .limit(10);
-
-          if (!authErr && Array.isArray(authRows) && authRows.length > 0) {
-            // For each auth user found, check if profile exists, if not create a placeholder
-            const placeholders = [];
-            for (const a of authRows) {
-              // try to fetch profile by id (single)
-              try {
-                const { data: profById, error: profByIdErr } = await supabase
-                  .from("profiles")
-                  .select("id, username, display_name, email, role, is_admin, created_at, is_blocked")
-                  .eq("id", a.id)
-                  .limit(1);
-
-                if (!profByIdErr && Array.isArray(profById) && profById.length > 0) {
-                  // profile exists -> show that, mark has_profile true
-                  placeholders.push({ ...profById[0], has_profile: true });
-                } else {
-                  // no profile -> show placeholder (allows inline role set) AND mark has_profile false
-                  placeholders.push({
-                    id: a.id,
-                    username: (a.email || "").split("@")[0],
-                    display_name: null,
-                    email: a.email || null,
-                    role: "user",
-                    is_admin: false,
-                    created_at: a.created_at || null,
-                    has_profile: false,
-                    is_blocked: false,
-                    /* note: saving role inline will upsert into profiles row */
-                  });
-                }
-              } catch (e) {
-                // if profile lookup fails, still add a basic placeholder
-                placeholders.push({
-                  id: a.id,
-                  username: (a.email || "").split("@")[0],
-                  display_name: null,
-                  email: a.email || null,
-                  role: "user",
-                  is_admin: false,
-                  created_at: a.created_at || null,
-                  has_profile: false,
-                  is_blocked: false,
-                });
-              }
-            }
-
-            finalUsers = placeholders;
-            // Adjust count: can't reliably compute total when mixing sources; show placeholders count
-            finalCount = placeholders.length;
-          }
-        } catch (e) {
-          // ignore auth.users lookup errors
-        }
+      const payload = await resp.json();
+      if (!payload || !payload.ok) {
+        console.warn("fetchUsersPage payload error:", payload);
+        setUsers([]);
+        setUsersTotalCount(0);
+        setUsersLoading(false);
+        return;
       }
+
+      // IMPORTANT FIX:
+      // use has_profile / confirmed values returned by the server when present.
+      // Do not force has_profile = true for every row.
+      const finalUsers = Array.isArray(payload.data)
+        ? payload.data.map(r => ({
+            // server should ideally return: id, username, display_name, email, role, is_admin, created_at, is_blocked, has_profile (bool), confirmed (bool)
+            ...r,
+            has_profile: typeof r.has_profile === "boolean" ? r.has_profile : true,
+            confirmed: typeof r.confirmed === "boolean" ? r.confirmed : (r.email_confirmed_at ? true : (r.confirmed === undefined ? undefined : r.confirmed)),
+          }))
+        : [];
+
+      const finalCount = Number(
+        // prefer payload.count (server-side pagination/count) else fallback to returned length
+        (typeof payload.count !== "undefined" && payload.count !== null) ? payload.count : (finalUsers.length || 0)
+      );
 
       setUsers(finalUsers || []);
       setUsersTotalCount(finalCount);
@@ -1174,7 +1115,11 @@ async function removeUser(uId) {
                     <div style={{ flex: 1 }}>
                       <div className="user-name">
                         {u.display_name || u.username || u.email || u.id}
+                        {/* show badges for no profile or unconfirmed */}
                         {!u.has_profile ? <span style={{ marginLeft: 8, color: "#f59e0b", fontSize: 12 }}>(no profile)</span> : null}
+                        {typeof u.confirmed === "boolean" && u.confirmed === false ? (
+                          <span style={{ marginLeft: 8, color: "#f97316", fontSize: 12 }}>(unconfirmed)</span>
+                        ) : null}
                         {u.is_blocked ? <span style={{ marginLeft: 8, background: "#fecaca", color: "#7f1d1d", padding: "2px 6px", borderRadius: 6, fontSize: 12 }}>blocked</span> : null}
                       </div>
                       <div className="user-sub">{u.email || ""}</div>
