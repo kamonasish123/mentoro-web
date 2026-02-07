@@ -1,5 +1,6 @@
 // pages/api/create-profile.js
-import { createServerSupabase } from "../../lib/supabaseClient";
+import { createServerSupabase } from "@/lib/supabaseClient";
+
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

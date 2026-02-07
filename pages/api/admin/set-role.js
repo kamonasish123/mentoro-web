@@ -1,5 +1,6 @@
 // pages/api/admin/set-role.js
-import { createServerSupabase } from "../../../lib/supabaseClient";
+import { createServerSupabase } from "@/lib/supabaseClient";
+
 
 /*
   POST /api/admin/set-role

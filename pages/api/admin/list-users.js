@@ -1,5 +1,6 @@
 // pages/api/admin/list-users.js
-import { createServerSupabase } from "../../../lib/supabaseClient";
+import { createServerSupabase } from "@/lib/supabaseClient";
+
 
 /*
  POST /api/admin/list-users

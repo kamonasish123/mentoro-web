@@ -3,7 +3,8 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { supabase } from "../../../lib/supabaseClient";
+import { supabase } from "@/lib/supabaseClient";
+
 
 /**
  * Ranklist page - uses course_user_stats aggregate table and subscribes to realtime updates.

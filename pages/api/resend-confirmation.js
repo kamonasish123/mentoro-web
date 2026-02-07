@@ -1,5 +1,6 @@
 // pages/api/resend-confirmation.js
-import { createServerSupabase } from "../../lib/supabaseClient";
+import { createServerSupabase } from "@/lib/supabaseClient";
+
 
 /*
   POST /api/resend-confirmation
