@@ -18,7 +18,7 @@ const contacts = {
   youtube: 'https://www.youtube.com/@kamonasishroyrony',
   facebook: 'https://www.facebook.com/kamonasishroyrony',
   instagram: 'https://www.instagram.com/kamonasishr',
-  cv: '',
+  // CV removed
 }
 
 /* --- Icons --- (unchanged) */
@@ -116,6 +116,12 @@ export default function Home() {
   // list of all courses to show on homepage (with counts & whether user enrolled)
   const [coursesList, setCoursesList] = useState([]);
   const [loadingCoursesList, setLoadingCoursesList] = useState(true);
+
+  // blog posts (latest 3)
+  const [homePosts, setHomePosts] = useState([]);
+  const [homeCommentsCount, setHomeCommentsCount] = useState({});
+  const [homeLikedByUser, setHomeLikedByUser] = useState({}); // map postId => true
+  const [homeLikesLocal, setHomeLikesLocal] = useState({}); // map postId => likes number (local override)
 
   // Topic filtering & selection state
   const [uniqueTopics, setUniqueTopics] = useState([]); // ordered list of unique topics for filter chips
@@ -273,7 +279,6 @@ export default function Home() {
   }, []);
 
   // fetch all courses to display on homepage (so newly created courses show up on homepage)
-  // then fetch per-course counts and whether current user is enrolled (so UI is accurate)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -345,37 +350,81 @@ export default function Home() {
     return () => { mounted = false };
   }, []);
 
-  // derive uniqueTopics when coursesList changes
+  // load latest 3 blog posts for homepage (and counts + whether liked by current user)
   useEffect(() => {
-    const map = new Map();
-    (coursesList || []).forEach(c => {
-      const t = parseTopicsFromRow(c);
-      t.forEach((topic) => {
-        const key = String(topic).trim();
-        if (!key) return;
-        if (!map.has(key)) map.set(key, { topic: key, count: 0 });
-        map.get(key).count++;
-      });
-    });
-    // order by frequency desc then by first-encounter order (Map insertion)
-    const arr = Array.from(map.values()).sort((a, b) => b.count - a.count);
-    const topicsOnly = arr.map(x => x.topic);
-    setUniqueTopics(topicsOnly);
-    // prune selectedTopics that are no longer available
-    setSelectedTopics(prev => prev.filter(t => topicsOnly.includes(t)));
-  }, [coursesList]);
+    let mounted = true;
+    (async () => {
+      try {
+        // fetch latest 3 posts
+        const { data: posts, error: postsErr } = await supabase
+          .from("blog_posts")
+          .select("id, title, excerpt, thumbnail, reads, likes, created_at")
+          .order("created_at", { ascending: false })
+          .limit(3);
 
-  // when the picker value changes, add it automatically (auto-apply), then clear picker
-  useEffect(() => {
-    if (!topicPickerValue) return;
-    const t = topicPickerValue.trim();
-    if (!t) return;
-    setSelectedTopics(prev => {
-      if (prev.includes(t)) return prev;
-      return [...prev, t];
-    });
-    setTopicPickerValue("");
-  }, [topicPickerValue]);
+        if (postsErr) {
+          console.warn("failed to fetch home posts", postsErr);
+          if (mounted) setHomePosts([]);
+          return;
+        }
+        const p = posts || [];
+        if (!mounted) return;
+
+        setHomePosts(p.map(x => ({
+          id: x.id,
+          title: x.title,
+          excerpt: x.excerpt,
+          thumbnail: x.thumbnail || '/thumb-placeholder.jpg',
+          reads: Number(x.reads ?? 0),
+          likes: Number(x.likes ?? 0),
+          created_at: x.created_at || '',
+        })));
+
+        // fetch comment counts for these posts
+        const postIds = (p || []).map(x => x.id).filter(Boolean);
+        if (postIds.length > 0) {
+          const { data: commentRows } = await supabase
+            .from("blog_comments")
+            .select("post_id")
+            .in("post_id", postIds);
+
+          const counts = {};
+          for (const r of commentRows || []) counts[r.post_id] = (counts[r.post_id] || 0) + 1;
+          if (mounted) setHomeCommentsCount(counts);
+        } else {
+          if (mounted) setHomeCommentsCount({});
+        }
+
+        // detect likes by current user for these posts
+        const { data: ud } = await supabase.auth.getUser();
+        const curUser = ud?.user ?? null;
+        if (curUser && postIds.length > 0) {
+          try {
+            const { data: likeRows } = await supabase
+              .from("blog_likes")
+              .select("post_id")
+              .eq("user_id", curUser.id)
+              .in("post_id", postIds);
+            const likedMap = {};
+            for (const lr of likeRows || []) likedMap[lr.post_id] = true;
+            if (mounted) setHomeLikedByUser(likedMap);
+          } catch (e) {
+            if (mounted) setHomeLikedByUser({});
+          }
+        } else {
+          if (mounted) setHomeLikedByUser({});
+        }
+
+        // set local likes map
+        const likesLocal = {};
+        for (const x of p || []) likesLocal[x.id] = Number(x.likes ?? 0);
+        if (mounted) setHomeLikesLocal(likesLocal);
+      } catch (e) {
+        console.error("home posts load error", e);
+      }
+    })();
+    return () => { mounted = false };
+  }, []);
 
   // enroll directly from homepage (simple UX for CP Foundations)
   async function handleHomeEnroll() {
@@ -438,12 +487,17 @@ export default function Home() {
     e?.preventDefault();
     if (!user) return alert("No user");
     try {
+      // ensure display_name is set (profiles.display_name is NOT NULL in your DB)
+      const usernameFallback = user.email ? (user.email.split("@")[0]) : user.id;
+      const displayNameValue = (profile && profile.display_name) ? profile.display_name : usernameFallback;
+
       const update = {
         id: user.id,
         institution: editInstitution ?? null,
         country: editCountry ?? null,
+        display_name: displayNameValue,
       };
-      // upsert the profile fields
+      // upsert the profile fields (include display_name to avoid NOT NULL violation)
       const { error } = await supabase.from("profiles").upsert(update, { onConflict: "id" });
       if (error) {
         console.error("profile update error", error);
@@ -460,7 +514,7 @@ export default function Home() {
       if (fetchErr) {
         console.warn("failed to re-fetch profile after save", fetchErr);
         // fallback to local optimistic update
-        setProfile((p) => p ? { ...p, institution: update.institution, country: update.country } : p);
+        setProfile((p) => p ? { ...p, institution: update.institution, country: update.country, display_name: update.display_name } : p);
       } else {
         setProfile({
           id: savedProf.id,
@@ -510,10 +564,15 @@ export default function Home() {
       const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(filePath);
       const publicUrl = publicData?.publicUrl || "";
 
-      // save to profiles.avatar_url
+      // ensure display_name fallback to avoid NOT NULL violation (same pattern as save)
+      const usernameFallback = user.email ? (user.email.split("@")[0]) : user.id;
+      const displayNameValue = (profile && profile.display_name) ? profile.display_name : usernameFallback;
+
+      // save to profiles.avatar_url (include display_name so upsert won't insert a row with null display_name)
       const { error: profErr } = await supabase.from("profiles").upsert({
         id: user.id,
         avatar_url: publicUrl,
+        display_name: displayNameValue,
       }, { onConflict: "id" });
 
       if (profErr) {
@@ -576,7 +635,7 @@ export default function Home() {
     setShowProfileModal(true);
   }
 
-  /* ---------- Render helpers for course cards ---------- */
+  /* ---------- Render helpers for course cards (unchanged) ---------- */
   function CourseCard({ courseObj, isCpFallback = false }) {
     // topics (admin will provide these fields)
     const topics = parseTopicsFromRow(courseObj);
@@ -717,6 +776,40 @@ export default function Home() {
   // helper to show first N cards unless showAllCourses is true
   const visibleCourses = showAllCourses ? coursesToShow : coursesToShow.slice(0, 6);
 
+  // --- Homepage blog like handler (calls same server endpoint used in blog page) ---
+  async function handleHomeLike(postId) {
+    try {
+      const { data: ud } = await supabase.auth.getUser();
+      const curUser = ud?.user ?? null;
+      if (!curUser) {
+        // prompt login (same behaviour as blog page)
+        return supabase.auth.signInWithOAuth({ provider: 'google' }).catch(()=>{});
+      }
+      // if already liked locally, ignore
+      if (homeLikedByUser[postId]) {
+        return; // already liked in this session
+      }
+
+      const res = await fetch('/api/blog/like', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_id: postId, user_id: curUser.id })
+      });
+      const j = await res.json().catch(()=>({}));
+
+      if (res.ok && j && (j.liked || j.success)) {
+        // update local UI
+        setHomeLikedByUser(prev => ({ ...prev, [postId]: true }));
+        setHomeLikesLocal(prev => ({ ...prev, [postId]: (Number(prev[postId] || 0) + 1) }));
+      } else {
+        // treat it as already liked or failure - ignore silently
+        console.warn("like response", j);
+      }
+    } catch (e) {
+      console.error("home like failed", e);
+    }
+  }
+
   return (
     <div>
       <Head>
@@ -839,13 +932,16 @@ export default function Home() {
         .contact-card:focus svg { color: var(--bg-dark); transform: scale(1.08); }
         .contact-title { font-weight: 600; color: inherit; }
         .contact-sub { font-size: 0.75rem; color: var(--muted-2); transition: color 220ms ease; }
+
+        /* New: grid for contacts to show exactly 3 columns on wide screens */
         .grid-responsive {
           display: grid;
           grid-template-columns: repeat(1, minmax(0, 1fr));
           gap: 0.75rem;
         }
         @media (min-width: 640px) { .grid-responsive { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        @media (min-width: 1024px) { .grid-responsive { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+        @media (min-width: 1024px) { .grid-responsive { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
         .muted { color: var(--muted); }
         .muted-2 { color: var(--muted-2); }
         .title { color: var(--text-light); }
@@ -965,6 +1061,7 @@ export default function Home() {
   border-radius: 12px;
   transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease;
   cursor: pointer;
+  overflow: visible; /* allow subtle shadows */
 }
 .hover-card:hover,
 .hover-card:focus {
@@ -1032,11 +1129,7 @@ export default function Home() {
   .topic-chip { font-size: 0.82rem; padding: 6px 8px; }
 }
 
-/* FIX: filter & typing box visibility
-   - ensure the select / picker and the manual typing input inside the topic controls
-     are dark background with readable (light) text and visible placeholder.
-   - limited, targeted rules so rest of UI is unchanged.
-*/
+/* FIX: filter & typing box visibility */
 .topic-toolbar select,
 .topic-toolbar input,
 .topic-toolbar .field,
@@ -1055,6 +1148,43 @@ input.p-2.field {
 
 /* small tweak: ensure course-stats items stay single-line and centered */
 .course-stats { white-space: nowrap; display: flex; gap: 18px; align-items: center; justify-content: center; }
+
+/* -----------------------
+   HOMEPAGE BLOG: layout fix
+   - place stats in one row, and controls (Like + Read more) in their own row
+   - reduce read button size so it fits visually
+------------------------*/
+.home-read-btn {
+  padding: 10px 12px !important;
+  border-radius: 10px !important;
+  font-size: 14px !important;
+  text-transform: none !important;
+  letter-spacing: 0.6px !important;
+  transition: box-shadow 160ms ease, background-color 160ms ease, color 160ms ease !important;
+  transform: none !important;
+}
+.home-like-btn {
+  padding: 8px 10px !important;
+  border-radius: 10px !important;
+  font-size: 14px !important;
+  text-transform: none !important;
+  transition: box-shadow 160ms ease, background-color 160ms ease, color 160ms ease !important;
+  transform: none !important;
+}
+.home-blog-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+/* ensure small read button won't get translated by global hover */
+.home-read-btn:hover,
+.home-like-btn:hover {
+  transform: none !important;
+}
+
       `}</style>
 
       <main className="min-h-screen">
@@ -1234,7 +1364,7 @@ input.p-2.field {
         <section id="teach" className="max-w-5xl mx-auto p-6 sm:p-10">
           <h2 className="text-xl font-bold mb-4 title">Learn Competitive Programming</h2>
 
-          {/* Topic controls: checkbox to show/hide, picker to add topics (auto-apply), Clear only visible when selection exists */}
+          {/* Topic controls */}
           <div style={{ marginBottom: 12 }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <input type="checkbox" checked={showTopicControls} onChange={(e) => setShowTopicControls(e.target.checked)} />
@@ -1243,7 +1373,6 @@ input.p-2.field {
 
             {showTopicControls && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                {/* topic picker: choose one available (not already selected) */}
                 <select
                   value={topicPickerValue}
                   onChange={(e) => setTopicPickerValue(e.target.value)}
@@ -1256,7 +1385,6 @@ input.p-2.field {
                   ))}
                 </select>
 
-                {/* quick manual-add input (optional) */}
                 <input
                   placeholder="Or type a topic and press Enter"
                   className="p-2 field"
@@ -1272,14 +1400,12 @@ input.p-2.field {
                   }}
                 />
 
-                {/* Clear visible only when there's at least one selected topic */}
                 {selectedTopics.length > 0 ? (
                   <button className="btn" onClick={clearFilters}>Clear</button>
                 ) : null}
               </div>
             )}
 
-            {/* show chosen filters */}
             {showTopicControls && selectedTopics.length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <div style={{ color: "var(--muted-2)" }}>Filtering by:</div>
@@ -1294,8 +1420,7 @@ input.p-2.field {
             )}
           </div>
 
-          {/* If we have courses in DB, render them dynamically so newly created courses show up on homepage.
-              Otherwise fallback to the original static three teaching cards. */}
+          {/* courses list */}
           {loadingCoursesList ? (
             <div className="muted-2">Loading courses…</div>
           ) : (coursesList && coursesList.length > 0) ? (
@@ -1310,7 +1435,6 @@ input.p-2.field {
                 </div>
               )}
 
-              {/* view all toggle if there are more courses than our preview limit */}
               {coursesToShow.length > 6 && (
                 <div style={{ marginTop: 12, textAlign: 'center' }}>
                   <button className="btn btn-cyan" onClick={() => setShowAllCourses(prev => !prev)}>
@@ -1321,8 +1445,6 @@ input.p-2.field {
             </>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-              {/* CP Foundations: centered card (kept as fallback) */}
               <CourseCard courseObj={{
                 id: cpCourse?.id ?? 'cp-fallback',
                 slug: cpCourse?.slug ?? 'cp-foundations',
@@ -1332,7 +1454,6 @@ input.p-2.field {
                 problemCount: cpCourse?.problemCount,
               }} isCpFallback={true} />
 
-              {/* Advanced Trees (centered) */}
               <CourseCard courseObj={{
                 id: 'advanced-trees',
                 slug: 'advanced-trees',
@@ -1344,7 +1465,6 @@ input.p-2.field {
                 userEnrolled: false,
               }} isCpFallback={false} />
 
-              {/* Contest Strategy (centered) */}
               <CourseCard courseObj={{
                 id: 'contest-strategy',
                 slug: 'contest-strategy',
@@ -1355,10 +1475,69 @@ input.p-2.field {
                 problemCount: null,
                 userEnrolled: false,
               }} isCpFallback={false} />
-
             </div>
           )}
 
+        </section>
+
+        {/* --- Read Blog Post (homepage preview) --- */}
+        <section id="blog-home" className="max-w-5xl mx-auto p-6 sm:p-10">
+          <h2 className="text-xl font-bold mb-4 title">Read Blog Post</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {homePosts.map((p) => (
+              <article key={p.id} className="hover-card p-6 text-left" style={{ minHeight: 320 }}>
+                <div style={{ height: 160, backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.45)), url(${p.thumbnail})`, backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: 8 }} role="img" aria-label={p.title} />
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span className="course-type-badge">Blog</span>
+                    <span className="muted-2" style={{ fontSize: 13 }}>{(p.created_at || '').slice(0, 10)}</span>
+                  </div>
+                  <h3 className="font-semibold title" style={{ marginTop: 8 }}>{p.title}</h3>
+                  <p className="muted-2" style={{ marginTop: 6 }}>{p.excerpt}</p>
+
+                  {/* Stats row */}
+                  <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', color: 'var(--muted-2)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7z" stroke="currentColor" strokeWidth="1.2"/></svg>
+                        <span>{p.reads ?? 0} Reads</span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="1.2"/></svg>
+                        <span>{homeCommentsCount[p.id] ?? 0} Comments</span>
+                      </div>
+                    </div>
+
+                    {/* intentionally empty cell so stats and actions don't collide */}
+                    <div style={{ width: 1, height: 1, opacity: 0 }} />
+                  </div>
+
+                  {/* Actions row moved to its own line so it can't overlap */}
+                  <div className="home-blog-actions-row">
+                    <button
+                      className={`btn home-like-btn`}
+                      onClick={() => handleHomeLike(p.id)}
+                      title={homeLikedByUser[p.id] ? 'Liked' : 'Like'}
+                      aria-pressed={!!homeLikedByUser[p.id]}
+                    >
+                      ❤️ {homeLikesLocal[p.id] ?? p.likes ?? 0}
+                    </button>
+
+                    <Link href={`/blog`} className="btn btn-cyan home-read-btn" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      Read more
+                    </Link>
+                  </div>
+
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 18, textAlign: 'center' }}>
+            <Link href="/blog" className="btn btn-cyan">See all posts</Link>
+          </div>
         </section>
 
         <footer className="max-w-5xl mx-auto p-6 sm:p-10">
@@ -1366,6 +1545,7 @@ input.p-2.field {
             <h4 className="font-semibold text-lg text-center title">Get in touch</h4>
            <br/>
 
+            {/* grid-responsive updated to 3 columns at large screens */}
             <div className="grid-responsive">
               {/* Email */}
               {contacts.email ? (
@@ -1463,43 +1643,14 @@ input.p-2.field {
                 </div>
               )}
 
-              {/* CV / Download */}
-              {contacts.cv ? (
-                <a href={contacts.cv} download className="contact-card" aria-label="Download CV">
-                  <span aria-hidden="true">
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 3v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <path d="M8 11l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <rect x="3" y="17" width="18" height="4" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-                    </svg>
-                  </span>
-                  <div>
-                    <div className="contact-title">Download CV</div>
-                    <div className="contact-sub">PDF</div>
-                  </div>
-                </a>
-              ) : (
-                <div className="contact-disabled" aria-hidden="true">
-                  <span aria-hidden="true">
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 3v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <path d="M8 11l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <rect x="3" y="17" width="18" height="4" rx="1" stroke="currentColor" strokeWidth="1.5"/>
-                    </svg>
-                  </span>
-                  <div>Download CV — No link available</div>
-                </div>
-              )}
             </div>
           </div>
-        </footer>
 
-        {/* Floating admin button (dev) */}
-        {isOperator && (
-          <Link href="/admin" className="admin-fab" aria-label="Admin (dev)">
-            Admin
-          </Link>
-        )}
+          {/* copyright center bottom */}
+          <div style={{ textAlign: 'center', marginTop: 14, color: 'var(--muted-2)', fontSize: 13 }}>
+            © Kamonasish Roy
+          </div>
+        </footer>
       </main>
     </div>
   )
