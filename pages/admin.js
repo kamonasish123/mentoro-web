@@ -1,4 +1,4 @@
-// pages/admin.js
+// pages/admin.js 
 import { useEffect, useState, useMemo, useRef } from "react";
 import Head from "next/head";
 import Link from "next/link";
@@ -86,6 +86,24 @@ export default function AdminPage() {
   // editing topics per existing course: { [courseId]: { editing: bool, topics: [], input: "" } }
   const [editingTopicsMap, setEditingTopicsMap] = useState({});
 
+  // ========== FEATURED PROJECTS STATE (NEW) ==========
+  const [featuredProjects, setFeaturedProjects] = useState([]);
+  const [fpPage, setFpPage] = useState(1);
+  const [fpPageSize, setFpPageSize] = useState(6); // default show 6 per page in admin list
+  const [fpTotalCount, setFpTotalCount] = useState(0);
+  const [fpLoading, setFpLoading] = useState(false);
+
+  const [fpEditingId, setFpEditingId] = useState(null); // id when editing existing project
+  const [fpTitle, setFpTitle] = useState("");
+  const [fpDesc, setFpDesc] = useState("");
+  const [fpTags, setFpTags] = useState(""); // comma separated
+  const [fpThumbnail, setFpThumbnail] = useState("");
+  const [fpUrl, setFpUrl] = useState("");
+  const [fpGithubUrl, setFpGithubUrl] = useState("");
+
+  const [fpDraggingId, setFpDraggingId] = useState(null);
+  const fpAbortRef = useRef(null);
+
   // derived roles available for operator (keeps stable)
   const rolesForFilter = useMemo(() => ["all", ...ALL_ROLES], []);
 
@@ -151,6 +169,9 @@ export default function AdminPage() {
         await loadCountsAndLists();
         // load first page of users
         await fetchUsersPage({ page: 1, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
+
+        // load featured projects initial page
+        await loadFeaturedProjects({ page: 1, pageSize: fpPageSize });
       } catch (err) {
         console.error("admin init error", err);
         window.location.href = "/";
@@ -174,11 +195,20 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usersPage, usersPageSize]);
 
+  // Re-fetch featured projects when page or pageSize changes
+  useEffect(() => {
+    loadFeaturedProjects({ page: fpPage, pageSize: fpPageSize });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fpPage, fpPageSize]);
+
   // cancel any in-flight user fetch on unmount
   useEffect(() => {
     return () => {
       if (usersAbortRef.current) {
         try { usersAbortRef.current.abort(); } catch (e) {}
+      }
+      if (fpAbortRef.current) {
+        try { fpAbortRef.current.abort(); } catch (e) {}
       }
     };
   }, []);
@@ -277,7 +307,226 @@ export default function AdminPage() {
     }
   }
 
-  /* ----------------- Course / Problem / Enrollment actions ----------------- */
+  /* ----------------- FEATURED PROJECTS: DATA & CRUD (NEW) ----------------- */
+
+  // Load featured projects (paginated). Order by position desc then created_at desc.
+  async function loadFeaturedProjects({ page = 1, pageSize = 6 } = {}) {
+    setFpLoading(true);
+    // abort previous
+    if (fpAbortRef.current) {
+      try { fpAbortRef.current.abort(); } catch (e) {}
+    }
+    const controller = new AbortController();
+    fpAbortRef.current = controller;
+
+    try {
+      // fetch count separately (supabase client can return count if exact pagination used; to keep it robust, we do two queries)
+      const offset = (page - 1) * pageSize;
+
+      const { data: rows, error } = await supabase
+        .from("featured_projects")
+        .select("id, title, desc, tags, thumbnail, url, github_url, created_at, updated_at, position", { count: "exact" })
+        .order("position", { ascending: false })
+        .order("created_at", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        console.error("loadFeaturedProjects failed", error);
+        setFeaturedProjects([]);
+        setFpTotalCount(0);
+        return;
+      }
+      const { count } = (await supabase.from("featured_projects").select("*", { count: "exact" }).maybeSingle()) || {};
+      // Note: the above .maybeSingle call returns first row; for reliable count, use separate select with exact count:
+      const { count: exactCount } = await (async () => {
+        try {
+          const c = await supabase.from("featured_projects").select("*", { count: "exact", head: true });
+          return { count: c.count ?? 0 };
+        } catch (e) {
+          return { count: 0 };
+        }
+      })();
+
+      setFeaturedProjects(rows || []);
+      setFpTotalCount(Number(exactCount ?? rows?.length ?? 0));
+    } catch (err) {
+      console.error("loadFeaturedProjects unexpected", err);
+      setFeaturedProjects([]);
+      setFpTotalCount(0);
+    } finally {
+      setFpLoading(false);
+      fpAbortRef.current = null;
+    }
+  }
+
+  async function createOrUpdateFeaturedProject(e) {
+    e?.preventDefault?.();
+    setActionMsg(null);
+
+    // validate
+    const title = (fpTitle || "").trim();
+    if (!title) return setActionMsg({ type: "error", text: "Title is required for featured project" });
+
+    let tagsArray = (fpTags || "").split(",").map(t => t.trim()).filter(Boolean);
+    if (tagsArray.length === 0) tagsArray = null;
+
+    try {
+      if (fpEditingId) {
+        // update
+        const payload = {
+          title,
+          desc: fpDesc || null,
+          tags: tagsArray,
+          thumbnail: fpThumbnail || null,
+          url: fpUrl || null,
+          github_url: fpGithubUrl || null,
+          updated_at: new Date().toISOString()
+        };
+
+        const { error } = await supabase.from("featured_projects").update(payload).eq("id", fpEditingId);
+        if (error) throw error;
+
+        setActionMsg({ type: "success", text: "Featured project updated" });
+        // refresh current page
+        await loadFeaturedProjects({ page: fpPage, pageSize: fpPageSize });
+        // reset form
+        setFpEditingId(null);
+        setFpTitle(""); setFpDesc(""); setFpTags(""); setFpThumbnail(""); setFpUrl("");
+        return;
+      }
+
+      // create -> set position to max(position)+1 for top placement
+      let maxRes = await supabase
+        .from("featured_projects")
+        .select("position", { head: true, count: "exact" });
+
+      // get current max position (fallback to epoch)
+      const { data: all } = await supabase.from("featured_projects").select("position").order("position", { ascending: false }).limit(1);
+      const maxPosition = (all && all.length > 0 && typeof all[0].position === "number") ? all[0].position : Math.floor(Date.now() / 1000);
+
+      const payload = {
+        title,
+        desc: fpDesc || null,
+        tags: tagsArray,
+        thumbnail: fpThumbnail || null,
+        url: fpUrl || null,
+        github_url: fpGithubUrl || null,
+        position: maxPosition + 1,
+      };
+
+      const { data: inserted, error } = await supabase.from("featured_projects").insert([payload]).select().single();
+      if (error) throw error;
+
+      setActionMsg({ type: "success", text: "Featured project created" });
+      // refresh first page to show newest at top
+      await loadFeaturedProjects({ page: 1, pageSize: fpPageSize });
+      setFpPage(1);
+      // reset form
+      setFpTitle(""); setFpDesc(""); setFpTags(""); setFpThumbnail(""); setFpUrl("");
+    } catch (err) {
+      console.error("createOrUpdateFeaturedProject err", err);
+      setActionMsg({ type: "error", text: (err && err.message) || "Failed to save featured project" });
+    }
+  }
+
+  async function deleteFeaturedProject(id) {
+    if (!id) return;
+    if (!confirm("Delete this featured project? This cannot be undone.")) return;
+    try {
+      const { error } = await supabase.from("featured_projects").delete().eq("id", id);
+      if (error) throw error;
+      setActionMsg({ type: "success", text: "Featured project deleted" });
+      // reload page (if last item on page removed maybe move page back)
+      const nextCount = Math.max(0, fpTotalCount - 1);
+      const maxPage = Math.max(1, Math.ceil(nextCount / fpPageSize));
+      if (fpPage > maxPage) setFpPage(maxPage);
+      await loadFeaturedProjects({ page: fpPage, pageSize: fpPageSize });
+    } catch (err) {
+      console.error("deleteFeaturedProject err", err);
+      setActionMsg({ type: "error", text: err?.message || "Delete failed" });
+    }
+  }
+
+  // Drag/Drop handlers (HTML5)
+  function onDragStartFp(e, id) {
+    setFpDraggingId(id);
+    try { e.dataTransfer?.setData("text/plain", id); } catch (e) {}
+  }
+  function onDragOverFp(e, overId) {
+    e.preventDefault();
+    // highlight could be added
+  }
+  function onDropFp(e, overId) {
+    e.preventDefault();
+    const draggedId = fpDraggingId ?? e.dataTransfer?.getData("text/plain");
+    if (!draggedId) return;
+    if (draggedId === overId) {
+      setFpDraggingId(null);
+      return;
+    }
+
+    // reorder locally: move dragged item before overId
+    setFeaturedProjects(prev => {
+      const list = Array.isArray(prev) ? [...prev] : [];
+      const fromIndex = list.findIndex(it => it.id === draggedId);
+      const toIndex = list.findIndex(it => it.id === overId);
+      if (fromIndex === -1 || toIndex === -1) return list;
+      const [item] = list.splice(fromIndex, 1);
+      list.splice(toIndex, 0, item);
+      return list;
+    });
+    setFpDraggingId(null);
+  }
+
+  // Persist new order to DB. We'll write positions based on array index (higher index => higher position value so it shows at top)
+  async function saveFeaturedOrder() {
+    try {
+      setActionMsg(null);
+      // compute new position values - assign descending integers: start from N -> 1
+      const list = featuredProjects || [];
+      const n = list.length;
+      // We'll assign position = n - index (so index 0 => position n)
+      // But to give gaps for future inserts, multiply by 10
+      const updates = list.map((item, idx) => ({
+        id: item.id,
+        position: (n - idx) * 10
+      }));
+
+      // perform updates sequentially (batched requests may be added but sequential is fine)
+      for (const u of updates) {
+        const { error } = await supabase.from("featured_projects").update({ position: u.position }).eq("id", u.id);
+        if (error) {
+          throw error;
+        }
+      }
+
+      setActionMsg({ type: "success", text: "Order saved" });
+      // reload current page
+      await loadFeaturedProjects({ page: fpPage, pageSize: fpPageSize });
+    } catch (err) {
+      console.error("saveFeaturedOrder err", err);
+      setActionMsg({ type: "error", text: err?.message || "Failed to save order" });
+    }
+  }
+
+  async function startEditFeatured(project) {
+    if (!project) return;
+    setFpEditingId(project.id);
+    setFpTitle(project.title || "");
+    setFpDesc(project.desc || "");
+    setFpTags(Array.isArray(project.tags) ? (project.tags || []).join(", ") : (project.tags || ""));
+    setFpThumbnail(project.thumbnail || "");
+    setFpUrl(project.url || "");
+    setFpGithubUrl(project.github_url || "");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function cancelEditFeatured() {
+    setFpEditingId(null);
+    setFpTitle(""); setFpDesc(""); setFpTags(""); setFpThumbnail(""); setFpUrl(""); setFpGithubUrl("");
+  }
+
+  /* ----------------- Course / Problem / Enrollment actions (unchanged) ----------------- */
 
   // add a topic to the create-course local list
   function addTopicLocal(e) {
@@ -805,6 +1054,7 @@ async function removeUser(uId) {
 
   // render
   const usersPagesCount = Math.max(1, Math.ceil((usersTotalCount || 0) / usersPageSize));
+  const fpPagesCount = Math.max(1, Math.ceil((fpTotalCount || 0) / fpPageSize));
 
   return (
     <div>
@@ -919,7 +1169,7 @@ async function removeUser(uId) {
                 <div style={{ display: "flex", gap: 8 }}>
                   <input
                     value={probVideo}
-                    onChange={e => setProbVideo(e.target.value)}
+                    onChange={(e) => setProbVideo(e.target.value)}
                     placeholder="Video solution (any link or text)"
                     className="w-1/2 p-2 field"
                   />
@@ -980,6 +1230,111 @@ async function removeUser(uId) {
               </div>
             </div>
           </section>
+
+          {/* ---------- FEATURED PROJECTS SECTION (NEW) ---------- */}
+          <section className="mb-6">
+            <h3 className="centered-h">Featured Projects (manage order & pagination)</h3>
+
+            <div className="card p-3" style={{ marginBottom: 12 }}>
+              <form onSubmit={createOrUpdateFeaturedProject} style={{ display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input value={fpTitle} onChange={e => setFpTitle(e.target.value)} placeholder="Project title" className="p-2 field" style={{ flex: 2, minWidth: 200 }} />
+                  <input value={fpThumbnail} onChange={e => setFpThumbnail(e.target.value)} placeholder="Thumbnail URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 160 }} />
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input value={fpUrl} onChange={e => setFpUrl(e.target.value)} placeholder="Live Demo URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
+                  <input value={fpGithubUrl} onChange={e => setFpGithubUrl(e.target.value)} placeholder="GitHub URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
+                  <input value={fpTags} onChange={e => setFpTags(e.target.value)} placeholder="Tags (comma separated)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
+                </div>
+
+                <textarea value={fpDesc} onChange={e => setFpDesc(e.target.value)} placeholder="Short description" className="p-2 field" rows={3} />
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                  <button className="btn btn-cyan" type="submit">{fpEditingId ? "Save changes" : "Create Project"}</button>
+                  {fpEditingId && <button className="btn" type="button" onClick={cancelEditFeatured}>Cancel</button>}
+                  <button className="btn" type="button" onClick={() => { setFpTitle(""); setFpDesc(""); setFpTags(""); setFpThumbnail(""); setFpUrl(""); setFpGithubUrl(""); setFpEditingId(null); }}>Clear</button>
+                </div>
+              </form>
+            </div>
+
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 8 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <label className="muted-2">Page:</label>
+                <select className="p-2 field" value={fpPage} onChange={e => setFpPage(Number(e.target.value))}>
+                  {Array.from({ length: fpPagesCount }, (_, i) => i + 1).map(pg => <option key={pg} value={pg}>{pg}</option>)}
+                </select>
+                <select className="p-2 field" value={fpPageSize} onChange={e => { setFpPageSize(Number(e.target.value)); setFpPage(1); }}>
+                  {[3, 6, 12].map(n => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+              </div>
+
+              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                <button className="btn" onClick={() => loadFeaturedProjects({ page: fpPage, pageSize: fpPageSize })} disabled={fpLoading}>Refresh</button>
+                <button className="btn btn-cyan" onClick={() => saveFeaturedOrder()} disabled={fpLoading || (featuredProjects.length === 0)}>Save order</button>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              {(fpLoading) ? <div style={{ color: "var(--muted-2)", padding: 10 }}>Loading featured projects…</div> : null}
+
+              {(!fpLoading && featuredProjects.length === 0) ? <div style={{ color: "var(--muted-2)", padding: 10 }}>No featured projects yet.</div> : null}
+
+              <div>
+                {/* Drag & drop list */}
+                <div style={{ display: "grid", gap: 8 }}>
+                  {featuredProjects.map(fp => (
+                    <div
+                      key={fp.id}
+                      draggable
+                      onDragStart={(e) => onDragStartFp(e, fp.id)}
+                      onDragOver={(e) => onDragOverFp(e, fp.id)}
+                      onDrop={(e) => onDropFp(e, fp.id)}
+                      style={{
+                        display: "flex",
+                        gap: 12,
+                        alignItems: "center",
+                        padding: 10,
+                        borderRadius: 8,
+                        background: fpDraggingId === fp.id ? "rgba(0,210,255,0.06)" : "rgba(255,255,255,0.02)",
+                        border: "1px solid rgba(255,255,255,0.03)",
+                        cursor: "grab"
+                      }}
+                    >
+                      <div style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", background: "#04111a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {fp.thumbnail ? <img src={fp.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ color: "var(--muted-2)", fontSize: 13 }}>No Img</div>}
+                      </div>
+
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <div style={{ fontWeight: 700, color: "white" }}>{fp.title}</div>
+                          <div style={{ marginLeft: "auto", color: "var(--muted-2)" }}>{(fp.position || 0)}</div>
+                        </div>
+                        <div style={{ color: "var(--muted-2)", fontSize: 13, marginTop: 6 }}>{(fp.desc || "").slice(0, 140)}{(fp.desc || "").length > 140 ? "…" : ""}</div>
+                        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                          <button className="btn" onClick={() => startEditFeatured(fp)}>Edit</button>
+                          <button className="btn" onClick={() => deleteFeaturedProject(fp.id)}>Delete</button>
+                          <a href={fp.url || "#"} target="_blank" rel="noreferrer" className="btn view-btn" onClick={(e) => { if (!fp.url) e.preventDefault(); }}>Open</a>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* pagination controls */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ color: "var(--muted-2)" }}>Page {fpPage} / {fpPagesCount} — <strong>{fpTotalCount}</strong> total</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn" onClick={() => { setFpPage(1); }} disabled={fpPage <= 1}>« First</button>
+                  <button className="btn" onClick={() => setFpPage(p => Math.max(1, p - 1))} disabled={fpPage <= 1}>‹ Prev</button>
+                  <button className="btn" onClick={() => setFpPage(p => Math.min(fpPagesCount, p + 1))} disabled={fpPage >= fpPagesCount}>Next ›</button>
+                  <button className="btn" onClick={() => setFpPage(fpPagesCount)} disabled={fpPage >= fpPagesCount}>Last »</button>
+                </div>
+              </div>
+            </div>
+          </section>
+          {/* ---------- END FEATURED PROJECTS SECTION ---------- */}
 
           {/* COURSES (with full edit/delete) */}
           <section className="mb-6">

@@ -141,20 +141,30 @@ export default function AboutPage() {
   }, [isMobile])
 
   useEffect(() => {
-    // IntersectionObserver to highlight active section in TOC
-    const obs = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) setActive(e.target.id)
-        })
-      },
-      { root: null, rootMargin: '0px 0px -40% 0px', threshold: 0.2 }
-    )
-    SECTIONS.forEach((s) => {
-      const el = document.getElementById(s.id)
-      if (el) obs.observe(el)
-    })
-    return () => obs.disconnect()
+    // Scroll spy: set active to the last section whose top is above a threshold
+    const offset = 140
+    const onScroll = () => {
+      const topThreshold = 50
+      if (window.scrollY <= topThreshold) {
+        if (SECTIONS[0]?.id) setActive(SECTIONS[0].id)
+        return
+      }
+      let current = SECTIONS[0]?.id
+      for (const s of SECTIONS) {
+        const el = document.getElementById(s.id)
+        if (!el) continue
+        const top = el.getBoundingClientRect().top
+        if (top - offset <= 0) current = s.id
+      }
+      if (current) setActive(current)
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+    }
   }, [])
 
   function scrollTo(id) {
@@ -181,13 +191,21 @@ export default function AboutPage() {
   return (
     <>
       <Head>
-        <title>About — {PROFILE.name}</title>
+        <title>{`About — ${PROFILE.name}`}</title>
         <meta name="description" content={`${PROFILE.name} — ${PROFILE.title}. ${PROFILE.summary}`} />
       </Head>
 
-      {/* Force pure black root (defensive) */}
+      {/* Match homepage background */}
       <style jsx global>{`
-        html, body, #__next { background: #000 !important; color: #e6f7ff !important; }
+        html, body, #__next { height: 100%; }
+        body {
+          background: #0f172a;
+          color: #e6f7ff;
+          background-image:
+            linear-gradient(rgba(0,210,255,0.03) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0,210,255,0.03) 1px, transparent 1px);
+          background-size: 50px 50px;
+        }
         .about-root { background: transparent !important; }
       `}</style>
 
@@ -417,22 +435,30 @@ export default function AboutPage() {
           </section>
         </div>
 
-        {/* Floating contact CTA */}
-        <button className="floating-contact" onClick={() => (window.location.href = `mailto:${PROFILE.email}`)} aria-label="Quick contact">✉</button>
       </main>
 
       {/* Styles */}
       <style jsx>{`
         :root {
-          --bg: #000;
-          --panel: rgba(255,255,255,0.01);
+          --bg: #0f172a;
+          --grid-cyan: rgba(0,210,255,0.03);
+          --panel: rgba(0,0,0,0.75);
+          --panel-soft: rgba(0,0,0,0.6);
           --glass-border: rgba(255,255,255,0.03);
           --accent: #00d2ff;
           --muted: rgba(255,255,255,0.72);
           --card-radius: 12px;
           font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
         }
-        html,body,#__next { height: 100%; background: var(--bg); color: #e6f7ff; }
+        html,body,#__next {
+          height: 100%;
+          background: var(--bg);
+          color: #e6f7ff;
+          background-image:
+            linear-gradient(var(--grid-cyan) 1px, transparent 1px),
+            linear-gradient(90deg, var(--grid-cyan) 1px, transparent 1px);
+          background-size: 50px 50px;
+        }
         .about-root { min-height: 100vh; padding: 28px; background: transparent; position: relative; }
 
         .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 320px 1fr; gap: 22px; align-items: start; }
@@ -482,7 +508,7 @@ export default function AboutPage() {
 
         /* Skills card specific */
         .skills-card { display:flex; flex-direction:column; gap:14px; }
-        .skills-sub { border-radius:10px; padding:10px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); }
+        .skills-sub { border-radius:10px; padding:10px; background: var(--panel-soft); border: 1px solid rgba(255,255,255,0.02); }
         .subhead { margin:0 0 8px 0; color:#e6f7ff; font-size:14px; }
         .skills-grid { display:flex; flex-wrap:wrap; gap:8px; }
         .skill-pill { background: rgba(255,255,255,0.02); padding:6px 10px; border-radius:999px; color: var(--muted); font-weight:600; }
@@ -494,12 +520,12 @@ export default function AboutPage() {
         .work-note { color: var(--muted); font-size:13px; margin-top:6px; }
 
         .projects-list { display:flex; flex-direction:column; gap:12px; }
-        .proj-card { padding:10px; border-radius:10px; background: rgba(255,255,255,0.01); }
+        .proj-card { padding:10px; border-radius:10px; background: var(--panel-soft); }
         .proj-title { font-weight:700; color:#e6f7ff; }
         .proj-period, .proj-desc { color: var(--muted); font-size:13px; }
 
         .comp-list { display:flex; flex-direction:column; gap:8px; }
-        .comp-item { padding:8px; border-radius:8px; background: rgba(255,255,255,0.01); }
+        .comp-item { padding:8px; border-radius:8px; background: var(--panel-soft); }
         .comp-title { font-weight:700; color:#e6f7ff; }
         .comp-note { color: var(--muted); font-size:13px; }
 
@@ -516,7 +542,7 @@ export default function AboutPage() {
         .authored-cta { }
 
         .education-list { display:flex; flex-direction:column; gap:12px; }
-        .edu-card { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px; border-radius:10px; background: rgba(255,255,255,0.01); }
+        .edu-card { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px; border-radius:10px; background: var(--panel-soft); }
         .edu-school { font-weight:700; color:#e6f7ff; }
         .edu-degree { color: var(--muted); }
         .edu-period { color: var(--muted); font-size:13px; }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-const projects = [
+const fallbackProjects = [
   { id: 'mentoro', title: 'Mentoro', desc: 'Interactive tutorial app for competitive programmers', tags: ['React Native', 'Firebase'] },
   { id: 'child-security', title: 'Child Security App', desc: 'Educational & safety features', tags: ['Kotlin', 'Firebase'] },
   { id: 'ahmed-classroom', title: "Ahmed's Classroom App", desc: 'Performance optimizations — reduced load times', tags: ['Flutter'] },
@@ -123,6 +123,11 @@ export default function Home() {
   const [homeLikedByUser, setHomeLikedByUser] = useState({}); // map postId => true
   const [homeLikesLocal, setHomeLikesLocal] = useState({}); // map postId => likes number (local override)
 
+  // featured projects (homepage)
+  const [featuredProjects, setFeaturedProjects] = useState([]);
+  const [featuredProjectsLoading, setFeaturedProjectsLoading] = useState(true);
+  const [showAllProjects, setShowAllProjects] = useState(false);
+
   // Topic filtering & selection state
   const [uniqueTopics, setUniqueTopics] = useState([]); // ordered list of unique topics for filter chips
   const [selectedTopics, setSelectedTopics] = useState([]); // topics currently selected (order preserved)
@@ -131,6 +136,13 @@ export default function Home() {
 
   // show limited cards on homepage
   const [showAllCourses, setShowAllCourses] = useState(false);
+
+  // choose featured projects from DB; fallback to local list
+  const projectsToRender = (featuredProjects && featuredProjects.length > 0)
+    ? featuredProjects
+    : fallbackProjects;
+  const visibleProjects = showAllProjects ? projectsToRender : projectsToRender.slice(0, 3);
+  const hasMoreProjects = projectsToRender.length > 3;
 
   // derive operator capability: admins and moderators (and super_admin) should see admin UI
   const isOperator = !!(profile && (["super_admin","admin","moderator"].includes((profile.role || "").toLowerCase()) || !!profile.is_admin));
@@ -206,6 +218,47 @@ export default function Home() {
         }
       } finally {
         if (mounted) setCheckingAdmin(false);
+      }
+    })();
+    return () => { mounted = false };
+  }, []);
+
+  // load featured projects for homepage
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setFeaturedProjectsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("featured_projects")
+          .select("id, title, desc, tags, thumbnail, url, github_url, created_at, position")
+          .order("position", { ascending: false })
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.warn("failed to fetch featured projects", error);
+          if (mounted) setFeaturedProjects([]);
+          return;
+        }
+
+        const rows = (data || []).map((r) => ({
+          id: r.id,
+          title: r.title,
+          desc: r.desc || "",
+          tags: Array.isArray(r.tags)
+            ? r.tags
+            : (typeof r.tags === "string" ? r.tags.split(",").map(t => t.trim()).filter(Boolean) : []),
+          thumbnail: r.thumbnail || "",
+          url: r.url || "",
+          github_url: r.github_url || "",
+        }));
+
+        if (mounted) setFeaturedProjects(rows);
+      } catch (err) {
+        console.error("featured projects load error", err);
+        if (mounted) setFeaturedProjects([]);
+      } finally {
+        if (mounted) setFeaturedProjectsLoading(false);
       }
     })();
     return () => { mounted = false };
@@ -875,6 +928,38 @@ export default function Home() {
           border-color: rgba(0,210,255,0.18);
           color: var(--accent-cyan);
         }
+        .project-action {
+          padding: 0.45rem 0.75rem;
+          border-radius: 8px;
+          font-size: 0.85rem;
+          font-weight: 600;
+          border: 1px solid rgba(255,255,255,0.06);
+          background: rgba(255,255,255,0.02);
+          color: var(--muted);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.35rem;
+          text-decoration: none;
+          cursor: pointer;
+          transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+        }
+        .project-action:hover,
+        .project-action:focus {
+          background: rgba(0, 210, 255, 0.10);
+          border-color: var(--accent-cyan);
+          color: var(--accent-cyan);
+          transform: translateY(-3px);
+          box-shadow: 0 10px 30px rgba(0, 210, 255, 0.08);
+          outline: none;
+        }
+        .project-action:disabled,
+        .project-action[disabled] {
+          opacity: 0.6;
+          cursor: not-allowed;
+          transform: none;
+          box-shadow: none;
+        }
         .btn:hover,
         .btn:focus {
           background: rgba(0, 210, 255, 0.10);
@@ -994,7 +1079,7 @@ export default function Home() {
   box-shadow: 0 10px 30px rgba(2,6,23,0.6);
   z-index: 50;
   transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease;
-  cursor: pointer;
+  cursor: default;
 }
 
 /* hover highlight (mimic btn-cyan hover) */
@@ -1060,7 +1145,7 @@ export default function Home() {
   border: 1px solid rgba(255,255,255,0.04);
   border-radius: 12px;
   transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease;
-  cursor: pointer;
+  cursor: default;
   overflow: visible; /* allow subtle shadows */
 }
 .hover-card:hover,
@@ -1193,7 +1278,7 @@ input.p-2.field {
             <div className="text-lg font-semibold title">Kamonasish</div>
             <div className="space-x-4 hidden md:inline-flex items-center">
               <a className="nav-link" href="#projects">Projects</a>
-              <a className="nav-link" href="#teach">Teach</a>
+              <a className="nav-link" href="#competitive-programming">Competitive Programming</a>
               <Link href="/blog" className="nav-link" >Blog</Link>
 
               {/* Login / Signup OR Logout & Avatar */}
@@ -1284,7 +1369,7 @@ input.p-2.field {
             </div>
 
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted-2)" }}>
-              Click <strong>Update profile</strong> to edit Institution, Country and upload a new avatar.
+              Click <strong>Update profile</strong> to edit Institution, Country and upload a new profile picture.
             </div>
           </aside>
         )}
@@ -1335,33 +1420,75 @@ input.p-2.field {
 
         <section id="projects" className="max-w-5xl mx-auto p-6 sm:p-10">
           <h2 className="text-xl font-bold mb-4 title">Featured Projects</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((p) => (
-              <article
-                key={p.id}
-                className="hover-card p-6 text-center"
-                role="button"
-                tabIndex={0}
-                onClick={() => window.alert(`${p.title} — demo click`)}
-              >
-                <div className="h-36 bg-gradient-to-r from-slate-700 to-slate-500 rounded-md mb-3 mx-auto w-full" role="img" aria-label={`${p.title} preview`}></div>
-                <h3 className="font-semibold text-lg title">{p.title}</h3>
-                <p className="muted-2 mt-2">{p.desc}</p>
-                <div className="mt-3 flex flex-wrap gap-2 justify-center">
-                  {p.tags.map((t, i) => (
-                    <span key={i} className="text-xs px-2 py-1 bg-white/6 rounded text-white/90">{t}</span>
-                  ))}
+          {featuredProjectsLoading ? (
+            <div className="muted-2">Loading projects...</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {visibleProjects.map((p) => (
+                  <article
+                    key={p.id}
+                    className="hover-card p-6 text-center"
+                    role="article"
+                  >
+                    <div
+                      className="h-36 bg-gradient-to-r from-slate-700 to-slate-500 rounded-md mb-3 mx-auto w-full"
+                      role="img"
+                      aria-label={`${p.title} preview`}
+                      style={p.thumbnail ? { backgroundImage: `url(${p.thumbnail})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+                    ></div>
+                    <h3 className="font-semibold text-lg title">{p.title}</h3>
+                    <p className="muted-2 mt-2">{p.desc}</p>
+                    <div className="mt-3 flex flex-wrap gap-2 justify-center">
+                      {(p.tags || []).map((t, i) => (
+                        <span key={i} className="text-xs px-2 py-1 bg-white/6 rounded text-white/90">{t}</span>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex gap-2 justify-center">
+                      {p.url ? (
+                        <a className="project-action" href={p.url} target="_blank" rel="noopener noreferrer">Live Demo</a>
+                      ) : (
+                        <button className="project-action" type="button" disabled>Live Demo</button>
+                      )}
+                      {p.github_url ? (
+                        <a
+                          className="project-action"
+                          href={p.github_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="Open GitHub project"
+                          title="GitHub"
+                        >
+                          <IconGitHub className="w-4 h-4" />
+                        </a>
+                      ) : (
+                        <button
+                          className="project-action"
+                          type="button"
+                          disabled
+                          aria-label="GitHub link not available"
+                          title="GitHub"
+                        >
+                          <IconGitHub className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {hasMoreProjects && (
+                <div style={{ marginTop: 12, textAlign: "center" }}>
+                  <button className="btn btn-cyan" onClick={() => setShowAllProjects(prev => !prev)}>
+                    {showAllProjects ? "Show less" : `Show all (${projectsToRender.length})`}
+                  </button>
                 </div>
-                <div className="mt-4 flex gap-2 justify-center">
-                  <button className="px-3 py-1 border rounded text-sm muted" type="button">Live Demo</button>
-                  <button className="px-3 py-1 border rounded text-sm muted" type="button">Case Study</button>
-                </div>
-              </article>
-            ))}
-          </div>
+              )}
+            </>
+          )}
         </section>
 
-        <section id="teach" className="max-w-5xl mx-auto p-6 sm:p-10">
+        <section id="competitive-programming" className="max-w-5xl mx-auto p-6 sm:p-10">
           <h2 className="text-xl font-bold mb-4 title">Learn Competitive Programming</h2>
 
           {/* Topic controls */}
