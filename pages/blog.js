@@ -1,6 +1,6 @@
 // pages/blog.js
 import Head from 'next/head'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient' // <-- your existing client
 
@@ -12,6 +12,26 @@ const formatNumber = (n) => {
   return String(n)
 }
 const CATEGORIES = ['All', 'Funny', 'Educational', 'Tech', 'Religious', 'Others']
+const DHAKA_TZ = 'Asia/Dhaka'
+
+function formatDateParts(ts) {
+  if (!ts) return { date: '', time: '' }
+  const d = ts instanceof Date ? ts : new Date(ts)
+  if (Number.isNaN(d.getTime())) return { date: '', time: '' }
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: DHAKA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: DHAKA_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
+  return { date, time }
+}
 
 export default function BlogPage() {
   const router = useRouter()
@@ -22,6 +42,8 @@ export default function BlogPage() {
   const [comments, setComments] = useState({}) // { postId: [..] }
   const [likes, setLikes] = useState({}) // map of postId => true (for current user)
   const [reads, setReads] = useState({}) // local read counts override (merged with post.reads)
+  const [likeNoticeByPost, setLikeNoticeByPost] = useState({})
+  const likeNoticeTimers = useRef({})
 
   // comment-related
   const [commentLikes, setCommentLikes] = useState({}) // map commentId => true for current user
@@ -47,6 +69,36 @@ export default function BlogPage() {
   const [currentUserId, setCurrentUserId] = useState(null)
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
   const [userRole, setUserRole] = useState('user')
+  const [currentUserAvatar, setCurrentUserAvatar] = useState('')
+  const [currentUserDisplayName, setCurrentUserDisplayName] = useState('')
+
+  async function fetchProfilesByIds(ids) {
+    const list = Array.from(new Set((ids || []).filter(Boolean)))
+    if (list.length === 0) return new Map()
+    try {
+      // prefer RPC if available (works with RLS-friendly public profiles)
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_public_profiles', { ids: list })
+      if (!rpcErr && Array.isArray(rpcData)) {
+        const map = new Map()
+        for (const p of rpcData || []) map.set(p.id, p)
+        return map
+      }
+    } catch (e) {
+      // fall through to direct select
+    }
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, display_name, username, avatar_url')
+        .in('id', list)
+      if (error) return new Map()
+      const map = new Map()
+      for (const p of data || []) map.set(p.id, p)
+      return map
+    } catch (e) {
+      return new Map()
+    }
+  }
 
   /* Hydrate: load auth + posts + meta from DB */
   useEffect(() => {
@@ -83,12 +135,34 @@ export default function BlogPage() {
             setUserRole('user')
             setIsSuperAdmin(false)
           }
+
+          // fetch display name + avatar from profiles (for comments/replies)
+          try {
+            const { data: profRow } = await supabase
+              .from('profiles')
+              .select('display_name, username, avatar_url')
+              .eq('id', user.id)
+              .limit(1)
+              .maybeSingle()
+            if (profRow) {
+              setCurrentUserDisplayName(profRow.display_name || profRow.username || '')
+              setCurrentUserAvatar(profRow.avatar_url || '')
+            } else {
+              setCurrentUserDisplayName('')
+              setCurrentUserAvatar('')
+            }
+          } catch (e) {
+            setCurrentUserDisplayName('')
+            setCurrentUserAvatar('')
+          }
         } else {
           setAuthUser(null)
           setCurrentUserName('')
           setCurrentUserId(null)
           setIsSuperAdmin(false)
           setUserRole('user')
+          setCurrentUserAvatar('')
+          setCurrentUserDisplayName('')
         }
       } catch (e) {
         console.warn('auth check failed', e)
@@ -162,31 +236,16 @@ export default function BlogPage() {
       if (postIds.length > 0) {
         const { data: allComments } = await supabase
           .from('blog_comments')
-          .select('id, post_id, author_name, text, created_at')
+          .select('*')
           .in('post_id', postIds)
           .order('created_at', { ascending: false })
-
-        // build comment map per post
-        const cMap = {}
-        const commentIds = []
-        for (const c of allComments || []) {
-          const pid = c.post_id
-          commentIds.push(c.id)
-          cMap[pid] = cMap[pid] || []
-          cMap[pid].push({
-            id: c.id,
-            author: c.author_name || 'Anonymous',
-            text: c.text,
-            date: (c.created_at || '').slice(0, 10),
-          })
-        }
 
         // fetch replies for those posts
         let replies = []
         try {
           const { data: allReplies } = await supabase
             .from('blog_comment_replies')
-            .select('id, comment_id, post_id, author_name, text, created_at')
+            .select('*')
             .in('post_id', postIds)
             .order('created_at', { ascending: true })
           replies = allReplies || []
@@ -194,15 +253,58 @@ export default function BlogPage() {
           replies = []
         }
 
+        // build profile map for comment/reply authors
+        const userIds = new Set()
+        for (const c of allComments || []) {
+          const uid = c.user_id || c.author_id || c.userId
+          if (uid) userIds.add(uid)
+        }
+        for (const r of replies || []) {
+          const uid = r.user_id || r.author_id || r.userId
+          if (uid) userIds.add(uid)
+        }
+        const profileMap = await fetchProfilesByIds(Array.from(userIds))
+
+        // build comment map per post
+        const cMap = {}
+        const commentIds = []
+        for (const c of allComments || []) {
+          const pid = c.post_id
+          const uid = c.user_id || c.author_id || c.userId || null
+          const prof = uid ? profileMap.get(uid) : null
+          const authorName = prof?.display_name || prof?.username || c.author_name || 'Anonymous'
+          const avatarUrl = prof?.avatar_url || ''
+          commentIds.push(c.id)
+          cMap[pid] = cMap[pid] || []
+          const dt = formatDateParts(c.created_at)
+          cMap[pid].push({
+            id: c.id,
+            author: authorName,
+            text: c.text,
+            date: dt.date,
+            time: dt.time,
+            user_id: uid,
+            avatar_url: avatarUrl,
+          })
+        }
+
         // map replies to comment id
         const rMap = {}
         for (const r of replies) {
+          const uid = r.user_id || r.author_id || r.userId || null
+          const prof = uid ? profileMap.get(uid) : null
+          const authorName = prof?.display_name || prof?.username || r.author_name || 'Anonymous'
+          const avatarUrl = prof?.avatar_url || ''
+          const dt = formatDateParts(r.created_at)
           rMap[r.comment_id] = rMap[r.comment_id] || []
           rMap[r.comment_id].push({
             id: r.id,
-            author: r.author_name || 'Anonymous',
+            author: authorName,
             text: r.text,
-            date: (r.created_at || '').slice(0, 10)
+            date: dt.date,
+            time: dt.time,
+            user_id: uid,
+            avatar_url: avatarUrl,
           })
         }
         setRepliesMap(rMap)
@@ -425,20 +527,18 @@ export default function BlogPage() {
     try {
       const { data: postComments } = await supabase
         .from('blog_comments')
-        .select('id, author_name, text, created_at')
+        .select('*')
         .eq('post_id', post.id)
         .order('created_at', { ascending: false })
 
       const commentRows = postComments || []
-      // map post comments
-      setComments(prev => ({ ...prev, [post.id]: commentRows.map(c => ({ id: c.id, author: c.author_name || 'Anonymous', text: c.text, date: (c.created_at || '').slice(0, 10) })) }))
 
       // fetch replies for this post and map per comment
       let replies = []
       try {
         const { data: postReplies } = await supabase
           .from('blog_comment_replies')
-          .select('id, comment_id, author_name, text, created_at')
+          .select('*')
           .eq('post_id', post.id)
           .order('created_at', { ascending: true })
         replies = postReplies || []
@@ -446,11 +546,57 @@ export default function BlogPage() {
         replies = []
       }
 
+      // build profile map for comment/reply authors (this post only)
+      const userIds = new Set()
+      for (const c of commentRows || []) {
+        const uid = c.user_id || c.author_id || c.userId
+        if (uid) userIds.add(uid)
+      }
+      for (const r of replies || []) {
+        const uid = r.user_id || r.author_id || r.userId
+        if (uid) userIds.add(uid)
+      }
+      const profileMap = await fetchProfilesByIds(Array.from(userIds))
+
+      // map post comments
+      setComments(prev => ({
+        ...prev,
+        [post.id]: commentRows.map(c => {
+          const uid = c.user_id || c.author_id || c.userId || null
+          const prof = uid ? profileMap.get(uid) : null
+          const authorName = prof?.display_name || prof?.username || c.author_name || 'Anonymous'
+          const avatarUrl = prof?.avatar_url || ''
+          const dt = formatDateParts(c.created_at)
+          return {
+            id: c.id,
+            author: authorName,
+            text: c.text,
+            date: dt.date,
+            time: dt.time,
+            user_id: uid,
+            avatar_url: avatarUrl,
+          }
+        })
+      }))
+
       // --- FIX: build a fresh replies map for this post and merge (overwrite keys) ---
       const rMap = {}
       for (const r of replies) {
+        const uid = r.user_id || r.author_id || r.userId || null
+        const prof = uid ? profileMap.get(uid) : null
+        const authorName = prof?.display_name || prof?.username || r.author_name || 'Anonymous'
+        const avatarUrl = prof?.avatar_url || ''
+        const dt = formatDateParts(r.created_at)
         rMap[r.comment_id] = rMap[r.comment_id] || []
-        rMap[r.comment_id].push({ id: r.id, author: r.author_name || 'Anonymous', text: r.text, date: (r.created_at || '').slice(0, 10) })
+        rMap[r.comment_id].push({
+          id: r.id,
+          author: authorName,
+          text: r.text,
+          date: dt.date,
+          time: dt.time,
+          user_id: uid,
+          avatar_url: avatarUrl,
+        })
       }
       // merge but overwrite keys for this post's comments (prevents duplicates on repeated open)
       setRepliesMap(prev => ({ ...prev, ...rMap }))
@@ -533,8 +679,18 @@ export default function BlogPage() {
   // wrapper for clicks - prompts login for visitors
   function handleLikeClick(postId) {
     if (!authUser) {
-      // open OAuth or prompt login; keeping default flow simple
-      return supabase.auth.signInWithOAuth({ provider: 'google' }).catch(()=>{})
+      // show inline notice instead of redirecting to OAuth
+      setLikeNoticeByPost(prev => ({ ...prev, [postId]: 'Please log in to like this post.' }))
+      if (likeNoticeTimers.current[postId]) clearTimeout(likeNoticeTimers.current[postId])
+      likeNoticeTimers.current[postId] = setTimeout(() => {
+        setLikeNoticeByPost(prev => {
+          const next = { ...prev }
+          delete next[postId]
+          return next
+        })
+        delete likeNoticeTimers.current[postId]
+      }, 3000)
+      return
     }
     likePostOnce(postId)
   }
@@ -572,7 +728,7 @@ export default function BlogPage() {
 
   function commentLikeHandler(commentId) {
     if (!authUser) {
-      return supabase.auth.signInWithOAuth({ provider: 'google' }).catch(()=>{})
+      return alert('Please log in to like comments.')
     }
     commentLikeOnce(commentId)
   }
@@ -586,19 +742,52 @@ export default function BlogPage() {
       return
     }
     try {
-      const payload = { post_id: postId, author_name: author || currentUserName || user.email || 'Anonymous', text: text.trim() }
-      const { data: inserted, error: insertErr } = await supabase
+      const displayName = author || currentUserDisplayName || currentUserName || user.email || 'Anonymous'
+      const payload = { post_id: postId, author_name: displayName, text: text.trim(), user_id: user.id }
+      let inserted = null
+      let insertErr = null
+      const res1 = await supabase
         .from('blog_comments')
         .insert([payload])
         .select()
         .single()
+      inserted = res1.data
+      insertErr = res1.error
+      if (insertErr && String(insertErr.message || '').toLowerCase().includes('column') && String(insertErr.message || '').toLowerCase().includes('user_id')) {
+        const res2 = await supabase
+          .from('blog_comments')
+          .insert([{ post_id: postId, author_name: displayName, text: text.trim() }])
+          .select()
+          .single()
+        inserted = res2.data
+        insertErr = res2.error
+      }
       if (insertErr) {
         console.error('comment insert failed', insertErr)
-        const newComment = { id: uid('c_'), author: payload.author_name, text: payload.text, date: new Date().toISOString().slice(0, 10) }
+        const dt = formatDateParts(new Date())
+        const newComment = {
+          id: uid('c_'),
+          author: displayName,
+          text: text.trim(),
+          date: dt.date,
+          time: dt.time,
+          user_id: user.id,
+          avatar_url: currentUserAvatar || '',
+        }
         setComments(prev => ({ ...prev, [postId]: [newComment, ...(prev[postId] || [])] }))
         return
       }
-      const newComment = { id: inserted.id, author: inserted.author_name || 'Anonymous', text: inserted.text, date: (inserted.created_at || '').slice(0, 10) }
+      const createdAt = inserted?.created_at || new Date()
+      const dt = formatDateParts(createdAt)
+      const newComment = {
+        id: inserted.id,
+        author: inserted.author_name || displayName || 'Anonymous',
+        text: inserted.text,
+        date: dt.date,
+        time: dt.time,
+        user_id: inserted.user_id || user.id,
+        avatar_url: currentUserAvatar || '',
+      }
       setComments(prev => ({ ...prev, [postId]: [newComment, ...(prev[postId] || [])] }))
       // ensure like count map for this new comment
       setCommentLikeCounts(prev => ({ ...prev, [newComment.id]: 0 }))
@@ -617,26 +806,65 @@ export default function BlogPage() {
       return
     }
     try {
+      const displayName = currentUserDisplayName || currentUserName || user.email || 'Anonymous'
       const payload = {
         comment_id: commentId,
         post_id: selectedPost.id,
-        author_name: currentUserName || user.email || 'Anonymous',
-        text
+        author_name: displayName,
+        text,
+        user_id: user.id,
       }
-      const { data: inserted, error: insertErr } = await supabase
+      let inserted = null
+      let insertErr = null
+      const res1 = await supabase
         .from('blog_comment_replies')
         .insert([payload])
         .select()
         .single()
+      inserted = res1.data
+      insertErr = res1.error
+      if (insertErr && String(insertErr.message || '').toLowerCase().includes('column') && String(insertErr.message || '').toLowerCase().includes('user_id')) {
+        const res2 = await supabase
+          .from('blog_comment_replies')
+          .insert([{
+            comment_id: commentId,
+            post_id: selectedPost.id,
+            author_name: displayName,
+            text,
+          }])
+          .select()
+          .single()
+        inserted = res2.data
+        insertErr = res2.error
+      }
       if (insertErr) {
         console.error('reply insert failed', insertErr)
-        const newReply = { id: uid('r_'), author: payload.author_name, text: payload.text, date: new Date().toISOString().slice(0, 10) }
+        const dt = formatDateParts(new Date())
+        const newReply = {
+          id: uid('r_'),
+          author: displayName,
+          text: text,
+          date: dt.date,
+          time: dt.time,
+          user_id: user.id,
+          avatar_url: currentUserAvatar || '',
+        }
         setRepliesMap(prev => ({ ...prev, [commentId]: [...(prev[commentId] || []), newReply] }))
         setReplyText(prev => ({ ...prev, [commentId]: '' }))
         setReplyOpen(prev => ({ ...prev, [commentId]: false }))
         return
       }
-      const newReply = { id: inserted.id, author: inserted.author_name || 'Anonymous', text: inserted.text, date: (inserted.created_at || '').slice(0, 10) }
+      const createdAt = inserted?.created_at || new Date()
+      const dt = formatDateParts(createdAt)
+      const newReply = {
+        id: inserted.id,
+        author: inserted.author_name || displayName || 'Anonymous',
+        text: inserted.text,
+        date: dt.date,
+        time: dt.time,
+        user_id: inserted.user_id || user.id,
+        avatar_url: currentUserAvatar || '',
+      }
       setRepliesMap(prev => ({ ...prev, [commentId]: [...(prev[commentId] || []), newReply] }))
       setReplyText(prev => ({ ...prev, [commentId]: '' }))
       setReplyOpen(prev => ({ ...prev, [commentId]: false }))
@@ -798,6 +1026,11 @@ export default function BlogPage() {
                             </svg>
                             <span className="count">{formatNumber(p.likes || 0)}</span>
                           </button>
+                          {!liked && likeNoticeByPost[p.id] ? (
+                            <span style={{ color: '#b45309', fontSize: 12 }}>
+                              {likeNoticeByPost[p.id]}
+                            </span>
+                          ) : null}
 
                           {/* <-- replaced markup per your snippet so it shows "X Reads" and "Y Comments" */}
                           <div className="stat" title="Reads">
@@ -936,6 +1169,11 @@ export default function BlogPage() {
                     </svg>
                     <span style={{ marginLeft: 8 }}>{formatNumber(posts.find(p => p.id === selectedPost.id)?.likes ?? selectedPost.likes ?? 0)}</span>
                   </button>
+                  {!likes[selectedPost.id] && likeNoticeByPost[selectedPost.id] ? (
+                    <span style={{ color: '#b45309', fontSize: 12 }}>
+                      {likeNoticeByPost[selectedPost.id]}
+                    </span>
+                  ) : null}
                   <div className="reads muted">{formatNumber(reads[selectedPost.id] || selectedPost.reads || 0)} reads</div>
 
                   {/* show Edit/Delete inside modal for managers */}
@@ -954,7 +1192,11 @@ export default function BlogPage() {
 
                   {/* top-level comment form: only for logged-in users */}
                   {authUser ? (
-                    <CommentFormLogged postId={selectedPost.id} onAdd={(author, text) => addComment(selectedPost.id, author, text)} currentUserName={currentUserName} />
+                    <CommentFormLogged
+                      postId={selectedPost.id}
+                      onAdd={(author, text) => addComment(selectedPost.id, author, text)}
+                      currentUserName={currentUserDisplayName || currentUserName}
+                    />
                   ) : (
                     <p className="muted-2">Please <button className="btn btn-outline" onClick={() => router.push('/login')}>Log in</button> to comment or reply.</p>
                   )}
@@ -966,9 +1208,18 @@ export default function BlogPage() {
                       {(comments[selectedPost.id] || []).map(c => (
                         <div key={c.id} className="comment-item comment-root">
                           <div className="comment-top">
-                            <div className="avatar" aria-hidden="true">{(c.author || 'A').slice(0,1).toUpperCase()}</div>
+                            <div className="avatar" aria-hidden="true">
+                              {c.avatar_url ? (
+                                <img src={c.avatar_url} alt="" />
+                              ) : (
+                                (c.author || 'A').slice(0,1).toUpperCase()
+                              )}
+                            </div>
                             <div style={{ flex: 1 }}>
-                              <div className="meta"><strong style={{ color: '#e6f7ff' }}>{c.author}</strong> • <span className="muted-2">{c.date}</span></div>
+                              <div className="meta">
+                                <strong style={{ color: '#e6f7ff' }}>{c.author}</strong> •
+                                <span className="muted-2">{c.date}{c.time ? ` • ${c.time}` : ''}</span>
+                              </div>
                               <div style={{ marginTop: 6 }}>{c.text}</div>
 
                               <div className="comment-actions" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -1003,14 +1254,33 @@ export default function BlogPage() {
                               <div style={{ marginTop: 10, marginLeft: 44 }}>
                                 {(repliesMap[c.id] || []).map(r => (
                                   <div key={r.id} className="comment-reply" style={{ marginBottom: 8 }}>
-                                    <div className="meta"><strong style={{ color: '#e6f7ff' }}>{r.author}</strong> • <span className="muted-2">{r.date}</span></div>
-                                    <div style={{ marginTop: 6 }}>{r.text}</div>
+                                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                      <div className="avatar avatar-sm" aria-hidden="true">
+                                        {r.avatar_url ? (
+                                          <img src={r.avatar_url} alt="" />
+                                        ) : (
+                                          (r.author || 'A').slice(0,1).toUpperCase()
+                                        )}
+                                      </div>
+                                      <div style={{ flex: 1 }}>
+                                        <div className="meta">
+                                          <strong style={{ color: '#e6f7ff' }}>{r.author}</strong> •
+                                          <span className="muted-2">{r.date}{r.time ? ` • ${r.time}` : ''}</span>
+                                        </div>
+                                        <div style={{ marginTop: 6 }}>{r.text}</div>
+                                      </div>
+                                    </div>
                                   </div>
                                 ))}
 
                                 {replyOpen[c.id] && authUser && (
                                   <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                                    <input value={replyText[c.id] || ''} onChange={(e) => setReplyText(prev => ({ ...prev, [c.id]: e.target.value }))} placeholder="Write a reply..." />
+                                    <input
+                                      className="reply-input"
+                                      value={replyText[c.id] || ''}
+                                      onChange={(e) => setReplyText(prev => ({ ...prev, [c.id]: e.target.value }))}
+                                      placeholder="Write a reply..."
+                                    />
                                     <button className="btn btn-cyan" onClick={() => addReply(c.id)}>Reply</button>
                                   </div>
                                 )}
@@ -1175,11 +1445,14 @@ export default function BlogPage() {
         .comment-form { display:flex; gap:8px; margin-bottom:12px; }
         .comment-form input, .comment-form textarea { background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--muted); padding:8px; border-radius:8px; outline:none; }
         .comment-form textarea { resize: vertical; min-height:64px; flex:1; }
+        .reply-input { flex: 1; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--muted); padding:8px; border-radius:8px; outline:none; }
 
         .comment-item { padding:10px; border-radius:10px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); margin-bottom:8px; display:flex; gap:12px; }
         .comment-root { align-items:flex-start; }
         .comment-top { display:flex; gap:12px; width:100%; }
-        .avatar { width:36px; height:36px; border-radius:50%; background: linear-gradient(90deg, rgba(0,210,255,0.06), rgba(255,255,255,0.01)); display:flex; align-items:center; justify-content:center; color: var(--muted); font-weight:700; }
+        .avatar { width:36px; height:36px; border-radius:50%; background: linear-gradient(90deg, rgba(0,210,255,0.06), rgba(255,255,255,0.01)); display:flex; align-items:center; justify-content:center; color: var(--muted); font-weight:700; overflow:hidden; }
+        .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+        .avatar.avatar-sm { width:28px; height:28px; font-size:12px; }
         .comment-reply { padding: 8px; border-radius: 8px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); margin-bottom: 6px; }
         .comment-actions .btn { padding:6px 10px; border-radius:8px; font-size:13px; }
         .btn-like { background: transparent; border: none; color: var(--muted-2); cursor: pointer; padding: 6px 8px; border-radius: 8px; }

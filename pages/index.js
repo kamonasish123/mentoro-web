@@ -196,6 +196,7 @@ export default function Home() {
   const [userEnrolledOnHome, setUserEnrolledOnHome] = useState(false);
   const [enrollActionLoading, setEnrollActionLoading] = useState(false);
   const [enrollingCourseId, setEnrollingCourseId] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // list of all courses to show on homepage (with counts & whether user enrolled)
   const [coursesList, setCoursesList] = useState([]);
@@ -306,6 +307,16 @@ export default function Home() {
     })();
     return () => { mounted = false };
   }, []);
+
+  // lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = mobileMenuOpen ? "hidden" : original;
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [mobileMenuOpen]);
 
   // load featured projects for homepage
   useEffect(() => {
@@ -1462,12 +1473,67 @@ input.p-2.field {
   transform: none !important;
 }
 
+/* -----------------------
+   MOBILE MENU (drawer)
+------------------------*/
+.mobile-menu-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 20, 0.55);
+  z-index: 60;
+}
+.mobile-menu-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(80vw, 320px);
+  height: 100%;
+  background: rgba(8, 12, 26, 0.98);
+  border-left: 1px solid rgba(255,255,255,0.08);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: slideIn 180ms ease;
+}
+.mobile-menu-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.mobile-menu-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: #cfe3ff;
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+.mobile-menu-link:hover,
+.mobile-menu-link:focus {
+  background: rgba(255,255,255,0.08);
+  color: #ffffff;
+}
+.mobile-menu-meta {
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  margin-top: 6px;
+}
+@keyframes slideIn {
+  from { transform: translateX(12px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
       `}</style>
 
       <main className="min-h-screen">
         <header className="max-w-5xl mx-auto p-6 sm:p-10">
           <nav className="flex items-center justify-between" aria-label="Main navigation">
-            <div className="text-lg font-semibold title">Kamonasish</div>
+            <div className="text-lg font-semibold title" aria-hidden="true"></div>
             <div className="space-x-4 hidden md:inline-flex items-center">
               <a className="nav-link" href="#projects">Projects</a>
               <a className="nav-link" href="#competitive-programming">Competitive Programming</a>
@@ -1496,8 +1562,64 @@ input.p-2.field {
                 </Link>
               )}
             </div>
-            <button className="md:hidden p-2 muted" type="button" aria-expanded="false" aria-controls="mobile-menu">Menu</button>
+            <button
+              className="md:hidden p-2 muted"
+              type="button"
+              aria-expanded={mobileMenuOpen ? "true" : "false"}
+              aria-controls="mobile-menu"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+            >
+              Menu
+            </button>
           </nav>
+
+          {mobileMenuOpen && (
+            <div
+              id="mobile-menu"
+              className="mobile-menu-overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <div className="mobile-menu-panel" onClick={(e) => e.stopPropagation()}>
+                <div className="mobile-menu-header">
+                  <div className="text-base font-semibold title">Menu</div>
+                  <button className="btn btn-cyan btn-sm" onClick={() => setMobileMenuOpen(false)}>Close</button>
+                </div>
+
+                <a className="mobile-menu-link" href="#projects" onClick={() => setMobileMenuOpen(false)}>Projects</a>
+                <a className="mobile-menu-link" href="#competitive-programming" onClick={() => setMobileMenuOpen(false)}>Competitive Programming</a>
+                <Link href="/blog" className="mobile-menu-link" onClick={() => setMobileMenuOpen(false)}>Blog</Link>
+
+                {!user ? (
+                  <>
+                    <Link href="/login" className="mobile-menu-link" onClick={() => setMobileMenuOpen(false)}>Login</Link>
+                    <Link href="/signup" className="mobile-menu-link" onClick={() => setMobileMenuOpen(false)}>Sign up</Link>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setMobileMenuOpen(false); handleLogout(); }}
+                      className="mobile-menu-link"
+                      style={{ background: "transparent", border: "none", textAlign: "left", cursor: "pointer" }}
+                    >
+                      Logout
+                    </button>
+                  </>
+                )}
+
+                {isOperator && (
+                  <Link href="/admin" className="mobile-menu-link" onClick={() => setMobileMenuOpen(false)}>Admin</Link>
+                )}
+
+                {user && (
+                  <div className="mobile-menu-meta">
+                    Signed in as {profile?.display_name || profile?.username || "User"}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mt-8 card p-6 sm:p-8 shadow">
             <div className="flex flex-col md:flex-row items-center gap-6">

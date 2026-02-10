@@ -21,6 +21,8 @@ export default function BlogPostPage({ post }) {
   const [likes, setLikes] = useState(post?.likes ?? 0)
   const [liked, setLiked] = useState(false)
   const [checkingLiked, setCheckingLiked] = useState(true)
+  const [likeNotice, setLikeNotice] = useState('')
+  const noticeTimerRef = useRef(null)
 
   /* --- Count read (only once per mount when post.id available) --- */
   useEffect(() => {
@@ -153,14 +155,15 @@ export default function BlogPostPage({ post }) {
     const user = data?.user
 
     if (!user) {
-      // prompt login (you used this pattern elsewhere)
-      try {
-        await supabase.auth.signInWithOAuth({ provider: 'google' })
-      } catch (e) {
-        // ignore
-      }
+      setLikeNotice('Please log in to like this post.')
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+      noticeTimerRef.current = setTimeout(() => {
+        setLikeNotice('')
+        noticeTimerRef.current = null
+      }, 3000)
       return
     }
+    setLikeNotice('')
 
     try {
       const res = await fetch('/api/blog/like', {
@@ -209,6 +212,10 @@ export default function BlogPostPage({ post }) {
           {typeof post?.reads === 'number' ? `${fmt(post.reads)} reads` : ''}
         </div>
       </div>
+
+      {!liked && likeNotice ? (
+        <div style={{ color: '#b45309', fontSize: 13, marginTop: 6 }}>{likeNotice}</div>
+      ) : null}
 
       <div dangerouslySetInnerHTML={{ __html: post?.content ?? '' }} />
     </article>

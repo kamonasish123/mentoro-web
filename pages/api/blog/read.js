@@ -74,6 +74,15 @@ export default async function handler(req, res) {
             return res.status(200).json({ ok: true, inserted: 0, message: 'already_recorded' });
           }
 
+          // foreign key missing (user not in users table) -> fallback to RPC increment silently
+          if (code === '23503' || details.includes('foreign key') || details.includes('not present in table')) {
+            const rpc = await rpcIncrement(post_id);
+            if (rpc.ok && !rpc.error) {
+              const reads = Array.isArray(rpc.data) && rpc.data.length ? rpc.data[0].reads : null;
+              return res.status(200).json({ ok: true, inserted: 1, reads });
+            }
+          }
+
           // other error (FK or network) -> fallback to RPC increment
           console.warn('blog_reads insert error, attempting RPC fallback:', err);
           const rpc = await rpcIncrement(post_id);
