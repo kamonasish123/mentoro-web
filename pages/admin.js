@@ -74,6 +74,7 @@ export default function AdminPage() {
   const [probLink, setProbLink] = useState("");
   const [probDifficulty, setProbDifficulty] = useState("easy");
   const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [editingProblemId, setEditingProblemId] = useState(null);
 
   const [assignUserId, setAssignUserId] = useState("");
 
@@ -623,7 +624,37 @@ export default function AdminPage() {
     setCourseTopics([]); setTopicInput("");
   }
 
-  // addProblem: performs validation + schema-defensive insert
+  function resetProblemForm() {
+    setProbTitle("");
+    setProbLink("");
+    setProbDifficulty("easy");
+    setSelectedCourseId("");
+    setProbVideo("");
+    setProbText("");
+    setEditingProblemId(null);
+  }
+
+  function startEditProblem(p) {
+    if (!p) return;
+    setEditingProblemId(p.id);
+    setProbTitle(p.title || "");
+    setProbPlatform(p.platform || "Codeforces");
+    setProbLink(p.link || "");
+    setProbDifficulty(p.difficulty || "easy");
+    setProbVideo(p.video_solution || "");
+    setProbText(p.text_solution || p.solution || "");
+    setSelectedCourseId("");
+    setTimeout(() => {
+      const el = document.getElementById("problem-form");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  function cancelEditProblem() {
+    resetProblemForm();
+  }
+
+  // addProblem: performs validation + schema-defensive insert/update
   async function addProblem(e) {
     e?.preventDefault();
     setActionMsg(null);
@@ -638,15 +669,64 @@ export default function AdminPage() {
       return setActionMsg({ type: "error", text: "Video solution looks like a URL but it's invalid. Use full URL (https://...)" });
     }
 
+    const videoVal = probVideo && String(probVideo).trim() ? String(probVideo).trim() : null;
+    const textVal = probText && String(probText).trim() ? String(probText).trim() : null;
+
     try {
+      if (editingProblemId) {
+        const updatePayload = {
+          title: probTitle,
+          platform: probPlatform,
+          link: probLink || null,
+          difficulty: probDifficulty,
+          video_solution: videoVal,
+          text_solution: textVal,
+        };
+
+        const { error } = await supabase
+          .from("problems")
+          .update(updatePayload)
+          .eq("id", editingProblemId);
+
+        if (error) {
+          console.warn("Preferred update failed, will try fallback:", error);
+          const fallbackPayload = {
+            title: probTitle,
+            platform: probPlatform,
+            link: probLink || null,
+            difficulty: probDifficulty,
+            solution: textVal || videoVal || null,
+          };
+
+          const { error: err2 } = await supabase
+            .from("problems")
+            .update(fallbackPayload)
+            .eq("id", editingProblemId);
+          if (err2) throw err2;
+
+          resetProblemForm();
+          await loadCountsAndLists();
+          setActionMsg({
+            type: "warning",
+            text: "Problem updated using legacy `solution` column. `video_solution` / `text_solution` columns are missing, so separate video/text links cannot be saved. Add those columns in Supabase."
+          });
+          return;
+        }
+
+        resetProblemForm();
+        await loadCountsAndLists();
+        setActionMsg({ type: "success", text: "Problem updated" });
+        return;
+      }
+
       const payload = {
         title: probTitle,
         platform: probPlatform,
         link: probLink || null,
         difficulty: probDifficulty,
         created_by: profile.id,
-        video_solution: probVideo && String(probVideo).trim() ? String(probVideo).trim() : null,
-        text_solution: probText && String(probText).trim() ? String(probText).trim() : null,
+        video_solution: videoVal,
+        text_solution: textVal,
       };
 
       const { data: newProb, error } = await supabase
@@ -681,10 +761,12 @@ export default function AdminPage() {
           if (cpErr) throw cpErr;
         }
 
-        setProbTitle(""); setProbLink(""); setProbDifficulty("easy"); setSelectedCourseId("");
-        setProbVideo(""); setProbText("");
+        resetProblemForm();
         await loadCountsAndLists();
-        setActionMsg({ type: "success", text: "Problem added (fallback to legacy `solution` column)." });
+        setActionMsg({
+          type: "warning",
+          text: "Problem added using legacy `solution` column. `video_solution` / `text_solution` columns are missing, so separate video/text links cannot be saved. Add those columns in Supabase."
+        });
         return;
       }
 
@@ -696,8 +778,7 @@ export default function AdminPage() {
         if (cpErr) throw cpErr;
       }
 
-      setProbTitle(""); setProbLink(""); setProbDifficulty("easy"); setSelectedCourseId("");
-      setProbVideo(""); setProbText("");
+      resetProblemForm();
       await loadCountsAndLists();
       setActionMsg({ type: "success", text: "Problem added" });
     } catch (err) {
@@ -1159,8 +1240,8 @@ async function removeUser(uId) {
               </form>
             </div>
 
-            <div className="card p-4 hover-card">
-              <h3 className="card-title">Add Problem</h3>
+            <div className="card p-4 hover-card" id="problem-form">
+              <h3 className="card-title">{editingProblemId ? "Edit Problem" : "Add Problem"}</h3>
               <form onSubmit={addProblem} className="space-y-3">
                 <input value={probTitle} onChange={e => setProbTitle(e.target.value)} placeholder="Problem title" className="w-full p-2 field" />
                 <input value={probPlatform} onChange={e => setProbPlatform(e.target.value)} placeholder="Platform (Codeforces / SeriousOJ)" className="w-full p-2 field" />
@@ -1189,12 +1270,13 @@ async function removeUser(uId) {
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
                 </select>
-                <select value={selectedCourseId} onChange={(e) => setSelectedCourseId(e.target.value)} className="w-full p-2 field">
+                <select value={selectedCourseId} onChange={(e) => setSelectedCourseId(e.target.value)} className="w-full p-2 field" disabled={!!editingProblemId} title={editingProblemId ? "Course attachment is disabled while editing" : "Attach to course (optional)"}>
                   <option value="">— attach to course (optional) —</option>
                   {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
                 </select>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                  <button className="btn btn-cyan" type="submit">Add Problem</button>
+                  <button className="btn btn-cyan" type="submit">{editingProblemId ? "Save Changes" : "Add Problem"}</button>
+                  {editingProblemId && <button className="btn" type="button" onClick={cancelEditProblem}>Cancel</button>}
                 </div>
               </form>
             </div>
@@ -1587,6 +1669,10 @@ async function removeUser(uId) {
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     {p.link && <a href={p.link} target="_blank" rel="noreferrer" className="px-3 py-1 border rounded text-sm">Open</a>}
+                    <button
+                      className="px-3 py-1 border rounded text-sm"
+                      onClick={() => startEditProblem(p)}
+                    >Edit</button>
                     <button
                       className="px-3 py-1 border rounded text-sm"
                       onClick={async () => {

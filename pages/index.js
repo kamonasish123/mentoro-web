@@ -89,6 +89,76 @@ function parseTopicsFromRow(row) {
   return [];
 }
 
+function loadLocalEnrolledIds(userId) {
+  if (!userId) return new Set();
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(`so_enrolled_${userId}`);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function applyEnrollCountDelta(courseId, baseCount) {
+  if (typeof window === "undefined" || !courseId) return baseCount;
+  try {
+    const baseKey = `so_enroll_base_${courseId}`;
+    const deltaKey = `so_enroll_delta_${courseId}`;
+    const baseStored = Number(localStorage.getItem(baseKey));
+    let delta = Number(localStorage.getItem(deltaKey));
+    if (!Number.isFinite(delta)) delta = 0;
+    const baseNum = Number.isFinite(baseCount) ? baseCount : 0;
+
+    if (Number.isFinite(baseStored)) {
+      if (baseNum > baseStored) {
+        delta = 0;
+        localStorage.setItem(deltaKey, "0");
+        localStorage.setItem(baseKey, String(baseNum));
+      } else if (baseNum < baseStored) {
+        localStorage.setItem(baseKey, String(baseNum));
+      }
+    } else {
+      localStorage.setItem(baseKey, String(baseNum));
+    }
+
+    return baseNum + delta;
+  } catch {
+    return baseCount;
+  }
+}
+
+function bumpEnrollCountDelta(courseId) {
+  if (typeof window === "undefined" || !courseId) return;
+  try {
+    const deltaKey = `so_enroll_delta_${courseId}`;
+    const cur = Number(localStorage.getItem(deltaKey));
+    const next = (Number.isFinite(cur) ? cur : 0) + 1;
+    localStorage.setItem(deltaKey, String(next));
+  } catch {}
+}
+
+async function fetchEnrollCounts(courseIds) {
+  try {
+    if (!Array.isArray(courseIds) || courseIds.length === 0) return {};
+    const resp = await fetch("/api/course-counts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ courseIds }),
+    });
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch {}
+    if (!resp.ok || !data || !data.ok) return null;
+    return data.counts && typeof data.counts === "object" ? data.counts : {};
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [checkingAdmin, setCheckingAdmin] = useState(true);
@@ -272,7 +342,7 @@ export default function Home() {
       try {
         const { data: courses } = await supabase
           .from("courses")
-          .select("id, slug, title, description")
+          .select("*")
           .eq("slug", "cp-foundations")
           .limit(1);
 
@@ -290,10 +360,29 @@ export default function Home() {
           .select("id", { count: "exact", head: false })
           .eq("course_id", c.id);
 
-        const { count: enrolledCount } = await supabase
-          .from("enrollments")
-          .select("id", { count: "exact", head: false })
-          .eq("course_id", c.id);
+        let enrolledCount = 0;
+        try {
+          const counts = await fetchEnrollCounts([c.id]);
+          if (counts && typeof counts[c.id] === "number") {
+            enrolledCount = counts[c.id];
+          } else if (typeof c.enrolled_count === "number") {
+            enrolledCount = c.enrolled_count;
+          } else if (counts) {
+            enrolledCount = 0;
+          } else {
+            const { count } = await supabase
+              .from("enrollments")
+              .select("id", { count: "exact", head: false })
+              .eq("course_id", c.id);
+            enrolledCount = typeof count === "number" ? count : 0;
+          }
+        } catch (e) {
+          const { count } = await supabase
+            .from("enrollments")
+            .select("id", { count: "exact", head: false })
+            .eq("course_id", c.id);
+          enrolledCount = typeof count === "number" ? count : 0;
+        }
 
         const { data: userData } = await supabase.auth.getUser();
         const u = userData?.user ?? null;
@@ -306,6 +395,10 @@ export default function Home() {
             .eq("user_id", u.id)
             .limit(1);
           userEnrolled = (own || []).length > 0;
+          if (!userEnrolled) {
+            const localSet = loadLocalEnrolledIds(u.id);
+            userEnrolled = localSet.has(c.id);
+          }
         }
 
         if (mounted) {
@@ -350,17 +443,21 @@ export default function Home() {
         }
         const courses = baseCourses || [];
 
+        // fetch enrollment counts in one call (bypass RLS via server)
+        const enrollCounts = await fetchEnrollCounts(courses.map(c => c.id));
+        const serverCountsOk = enrollCounts !== null;
+
         // get current user id (if any)
         const { data: userData } = await supabase.auth.getUser();
         const u = userData?.user ?? null;
         const uid = u?.id ?? null;
+        const localEnrolledSet = uid ? loadLocalEnrolledIds(uid) : new Set();
 
         // for each course, fetch counts and whether current user enrolled.
         const enhanced = await Promise.all(courses.map(async (c) => {
           try {
-            const [{ count: problemCount }, { count: enrolledCount }] = await Promise.all([
+            const [{ count: problemCount }] = await Promise.all([
               supabase.from("course_problems").select("id", { count: "exact", head: false }).eq("course_id", c.id),
-              supabase.from("enrollments").select("id", { count: "exact", head: false }).eq("course_id", c.id),
             ]);
 
             let userEnrolled = false;
@@ -373,11 +470,31 @@ export default function Home() {
                 .limit(1);
               userEnrolled = (own || []).length > 0;
             }
+            if (!userEnrolled && uid && localEnrolledSet.has(c.id)) {
+              userEnrolled = true;
+            }
+
+            let finalEnrolledCount = (enrollCounts && typeof enrollCounts[c.id] === "number")
+              ? enrollCounts[c.id]
+              : null;
+            if (finalEnrolledCount === null) {
+              if (typeof c.enrolled_count === "number") {
+                finalEnrolledCount = c.enrolled_count;
+              } else if (serverCountsOk) {
+                finalEnrolledCount = 0;
+              } else {
+                const { count } = await supabase
+                  .from("enrollments")
+                  .select("id", { count: "exact", head: false })
+                  .eq("course_id", c.id);
+                finalEnrolledCount = typeof count === "number" ? count : 0;
+              }
+            }
 
             return {
               ...c,
               problemCount: typeof problemCount === "number" ? problemCount : 0,
-              enrolledCount: typeof enrolledCount === "number" ? enrolledCount : 0,
+              enrolledCount: finalEnrolledCount,
               userEnrolled,
             };
           } catch (err) {
@@ -509,6 +626,18 @@ export default function Home() {
       } else {
         // success: bump enrolled count and mark user enrolled
         setUserEnrolledOnHome(true);
+        bumpEnrollCountDelta(cpCourse.id);
+        try {
+          if (typeof window !== "undefined") {
+            const key = `so_enrolled_${u.id}`;
+            const raw = localStorage.getItem(key);
+            const arr = raw ? JSON.parse(raw) : [];
+            const set = new Set(Array.isArray(arr) ? arr : []);
+            set.add(cpCourse.id);
+            localStorage.setItem(key, JSON.stringify(Array.from(set)));
+            localStorage.setItem("so_last_user", u.id);
+          }
+        } catch (e) {}
         setCpCourse((prev) => prev ? { ...prev, enrolledCount: (prev.enrolledCount || 0) + 1 } : prev);
         // also update coursesList entry if present
         setCoursesList((prev) => prev.map(row => row.id === cpCourse.id ? { ...row, enrolledCount: (row.enrolledCount || 0) + 1, userEnrolled: true } : row));
@@ -697,6 +826,7 @@ export default function Home() {
 
     // counts - try multiple common field names, otherwise fallback to provided fields
     const enrolledCount = (typeof courseObj.enrolledCount === 'number') ? courseObj.enrolledCount : (typeof courseObj.enrolled_count === 'number' ? courseObj.enrolled_count : 0);
+    const displayEnrolledCount = applyEnrollCountDelta(courseObj.id, enrolledCount);
     const problemCount = (typeof courseObj.problemCount === 'number') ? courseObj.problemCount : (typeof courseObj.problem_count === 'number' ? courseObj.problem_count : 0);
 
     // course type (defensive naming)
@@ -757,7 +887,7 @@ export default function Home() {
         {/* NEW: counts on single centered row */}
         <div style={{ marginTop: 18 }}>
           <div className="course-stats muted-2" style={{ textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 18, alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>👥 {typeof enrolledCount === 'number' ? enrolledCount : '—'} enrolled</span>
+            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>👥 {typeof displayEnrolledCount === 'number' ? displayEnrolledCount : '—'} enrolled</span>
             <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>📚 {typeof problemCount === 'number' ? problemCount : '—'} problems</span>
           </div>
 
@@ -1782,3 +1912,4 @@ input.p-2.field {
     </div>
   )
 }
+
