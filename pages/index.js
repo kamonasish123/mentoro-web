@@ -102,6 +102,19 @@ function loadLocalEnrolledIds(userId) {
   }
 }
 
+function saveLocalEnrolledId(userId, courseId) {
+  if (!userId || !courseId || typeof window === "undefined") return;
+  try {
+    const key = `so_enrolled_${userId}`;
+    const raw = localStorage.getItem(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    const set = new Set(Array.isArray(arr) ? arr : []);
+    set.add(courseId);
+    localStorage.setItem(key, JSON.stringify(Array.from(set)));
+    localStorage.setItem("so_last_user", userId);
+  } catch {}
+}
+
 function applyEnrollCountDelta(courseId, baseCount) {
   if (typeof window === "undefined" || !courseId) return baseCount;
   try {
@@ -182,6 +195,7 @@ export default function Home() {
   const [loadingCpCourse, setLoadingCpCourse] = useState(true);
   const [userEnrolledOnHome, setUserEnrolledOnHome] = useState(false);
   const [enrollActionLoading, setEnrollActionLoading] = useState(false);
+  const [enrollingCourseId, setEnrollingCourseId] = useState(null);
 
   // list of all courses to show on homepage (with counts & whether user enrolled)
   const [coursesList, setCoursesList] = useState([]);
@@ -619,6 +633,7 @@ export default function Home() {
         // already enrolled? update state
         if (error.code === "23505" || error.message?.includes("duplicate")) {
           setUserEnrolledOnHome(true);
+          saveLocalEnrolledId(u.id, cpCourse.id);
         } else {
           console.error("enroll failed", error);
           alert("Enroll failed: " + error.message);
@@ -627,26 +642,66 @@ export default function Home() {
         // success: bump enrolled count and mark user enrolled
         setUserEnrolledOnHome(true);
         bumpEnrollCountDelta(cpCourse.id);
-        try {
-          if (typeof window !== "undefined") {
-            const key = `so_enrolled_${u.id}`;
-            const raw = localStorage.getItem(key);
-            const arr = raw ? JSON.parse(raw) : [];
-            const set = new Set(Array.isArray(arr) ? arr : []);
-            set.add(cpCourse.id);
-            localStorage.setItem(key, JSON.stringify(Array.from(set)));
-            localStorage.setItem("so_last_user", u.id);
-          }
-        } catch (e) {}
+        saveLocalEnrolledId(u.id, cpCourse.id);
         setCpCourse((prev) => prev ? { ...prev, enrolledCount: (prev.enrolledCount || 0) + 1 } : prev);
         // also update coursesList entry if present
         setCoursesList((prev) => prev.map(row => row.id === cpCourse.id ? { ...row, enrolledCount: (row.enrolledCount || 0) + 1, userEnrolled: true } : row));
+        // auto-open course after successful enrollment
+        window.location.href = `/enroll?course=${encodeURIComponent(cpCourse.slug)}`;
       }
     } catch (err) {
       console.error("unexpected enroll error", err);
       alert("Unexpected error while enrolling");
     } finally {
       setEnrollActionLoading(false);
+    }
+  }
+
+  async function handleCourseEnroll(courseObj) {
+    if (!courseObj || !courseObj.id) return;
+    if (enrollingCourseId) return;
+    try {
+      setEnrollingCourseId(courseObj.id);
+      const { data: userData } = await supabase.auth.getUser();
+      const u = userData?.user ?? null;
+      if (!u) {
+        const next = encodeURIComponent(`/enroll?course=${encodeURIComponent(courseObj.slug || "")}`);
+        window.location.href = `/login?next=${next}`;
+        return;
+      }
+
+      const { error } = await supabase.from("enrollments").insert([
+        { user_id: u.id, course_id: courseObj.id }
+      ]);
+
+      if (error) {
+        if (error.code === "23505" || error.message?.includes("duplicate")) {
+          saveLocalEnrolledId(u.id, courseObj.id);
+          setCoursesList((prev) => prev.map(row =>
+            row.id === courseObj.id ? { ...row, userEnrolled: true } : row
+          ));
+          return;
+        }
+        console.error("enroll failed", error);
+        alert("Enroll failed: " + error.message);
+        return;
+      }
+
+      saveLocalEnrolledId(u.id, courseObj.id);
+      bumpEnrollCountDelta(courseObj.id);
+      setCoursesList((prev) => prev.map(row =>
+        row.id === courseObj.id
+          ? { ...row, enrolledCount: (row.enrolledCount || 0) + 1, userEnrolled: true }
+          : row
+      ));
+      // auto-open course after successful enrollment
+      const slug = courseObj.slug || "";
+      window.location.href = `/enroll?course=${encodeURIComponent(slug)}`;
+    } catch (err) {
+      console.error("unexpected enroll error", err);
+      alert("Unexpected error while enrolling");
+    } finally {
+      setEnrollingCourseId(null);
     }
   }
 
@@ -922,7 +977,14 @@ export default function Home() {
               ) : (
                 // not enrolled: if visitor not logged in -> send to login, else go to enroll page
                 user ? (
-                  <Link href={`/enroll?course=${encodeURIComponent(courseObj.slug)}`} className="btn btn-cyan" style={{ display: 'inline-block' }}>Enroll Now</Link>
+                  <button
+                    className="btn btn-cyan"
+                    onClick={() => handleCourseEnroll(courseObj)}
+                    disabled={enrollingCourseId === courseObj.id}
+                    style={{ display: 'inline-block' }}
+                  >
+                    {enrollingCourseId === courseObj.id ? "Enrollingâ€¦" : "Enroll Now"}
+                  </button>
                 ) : (
                   <Link href={buildLoginWithNext(`/enroll?course=${encodeURIComponent(courseObj.slug)}`)} className="btn btn-cyan" style={{ display: 'inline-block' }}>Enroll Now</Link>
                 )
