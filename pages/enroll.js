@@ -1213,9 +1213,7 @@ export default function EnrollPage() {
               </div>
             )}
 
-            <p className="text-slate-600 mb-6">
-              SeriousOJ problems can be integrated to auto-mark in future. For now, other judges redirect to original site.
-            </p>
+
 
             {/* Difficulty filter UI */}
             <div className="mb-4 flex items-center justify-between">
