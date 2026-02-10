@@ -12,7 +12,9 @@ const PROFILE = {
   email: 'rkamonasish@gmail.com',
   phone: '+8801795985912',
   summary:
-    'Software Engineer with over one year of professional software development experience and six years of competitive programming expertise. I build high-performance, scalable applications and help students win contests.',
+    'I am a Software Engineer with professional industry experience and over seven years of competitive programming expertise. I focus on building efficient, scalable software and helping students sharpen their problem-solving skills for competitive programming.',
+  summaryExtra:
+    'In addition, I contribute as a Contest Coordinator and Problem Setter at SeriousOJ.',
   stats: { experienceYears: 1, competitiveYears: 6, solved: 5000, cfRating: 1475 },
   work: [
     { role: 'Problem Setter and Contest Coordinator', org: 'SeriousOJ', period: '04/2024 - Present', note: 'Contributed 100+ problems' },
@@ -51,16 +53,25 @@ const PROFILE = {
   ],
 
   research: [
-    'Algorithmic problem solving and contest problem design',
-    'Performance optimization for mobile apps',
-    'Educational tooling for competitive programmers',
+    'Artificial Intelligence',
+    'Machine Learning',
+    'Data Structures and Algorithms (DSA)',
+    'Game Theory',
+    'Graph Theory',
   ],
   achievements: [
     'IEEEXtreme top placements (6th place)',
     'CodeChef global rank 37 (July 2020)',
     'Facebook Hacker Cup 2021 — Qualified for 2nd Round',
   ],
-  hobbies: ['Competitive programming coaching', 'Open-source contributions', 'Reading research papers', 'Cycling'],
+  hobbies: [
+    'Writing humorous and insightful blog posts',
+    'Traveling and exploring new places',
+    'Reading books',
+    'Fishing',
+    'Problem solving and logical puzzles',
+    'Watching movies and analytical storytelling',
+  ],
 
   /* Skills grouped and ordered exactly as requested */
   skillsGrouped: {
@@ -220,15 +231,20 @@ export default function AboutPage() {
               <h1 className="name">{PROFILE.name}</h1>
               <div className="title">{PROFILE.title}</div>
               <p className="bio">{PROFILE.summary}</p>
-
-              <div className="contact">
-                <a href={`mailto:${PROFILE.email}`} className="contact-link">{PROFILE.email}</a>
-                <a href={`tel:${PROFILE.phone}`} className="contact-link">{PROFILE.phone}</a>
-                <div className="location muted">{PROFILE.location}</div>
-              </div>
+              <p className="bio" style={{ marginTop: 10 }}>
+                In addition, I contribute as a Contest Coordinator and Problem Setter at{' '}
+                <a
+                  href="https://serious-oj.com/user/28"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: 'underline', textDecorationThickness: 2, textUnderlineOffset: 3, fontWeight: 700 }}
+                >
+                  SeriousOJ
+                </a>.
+              </p>
 
               <div className="cta-row">
-                <button className="btn btn-cyan" onClick={() => (window.location.href = `mailto:${PROFILE.email}`)}>Contact</button>
+                <a className="btn btn-cyan" href="/#contact">Contact</a>
                 <button className="btn btn-outline" onClick={handleDownloadCV}>Download CV</button>
               </div>
               <div className="cv-notice" role="status" aria-live="polite">{cvNotice}</div>
@@ -391,7 +407,14 @@ export default function AboutPage() {
                         <div className="comp-footer">
                           <div className="authored-text">My authored problems on different judges.</div>
                           <div className="authored-cta">
-                            <button className="btn btn-outline" disabled>View (100+)</button>
+                            <a
+                              className="btn btn-outline"
+                              href="https://serious-oj.com/user/28?tabIndex=1"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              View (100+)
+                            </a>
                           </div>
                         </div>
                       </div>
@@ -425,9 +448,9 @@ export default function AboutPage() {
                   )}
 
                   {s.id === 'hobbies' && (
-                    <div className="hobbies">
-                      {PROFILE.hobbies.map((h) => <span key={h} className="hobby-pill">{h}</span>)}
-                    </div>
+                    <ul className="hobbies-list">
+                      {PROFILE.hobbies.map((h) => <li key={h}>{h}</li>)}
+                    </ul>
                   )}
                 </div>
               </article>
@@ -547,9 +570,8 @@ export default function AboutPage() {
         .edu-degree { color: var(--muted); }
         .edu-period { color: var(--muted); font-size:13px; }
 
-        .research-list, .ach-list { padding-left:18px; color: var(--muted); }
-        .hobbies { display:flex; gap:8px; flex-wrap:wrap; }
-        .hobby-pill { background: rgba(255,255,255,0.02); padding:6px 10px; border-radius:999px; color: var(--muted); }
+        .research-list, .ach-list { padding-left:18px; color: var(--muted); list-style: disc; }
+        .hobbies-list { padding-left:18px; color: var(--muted); list-style: disc; }
 
         .floating-contact { position: fixed; right: 18px; bottom: 18px; width: 56px; height: 56px; border-radius: 999px; background: linear-gradient(180deg, var(--accent), #00a8d6); color: #06202a; border: none; font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow: 0 12px 40px rgba(0,210,255,0.12); cursor:pointer; z-index: 80; }
 

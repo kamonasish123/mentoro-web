@@ -1,4 +1,4 @@
-// pages/index.js
+﻿// pages/index.js
 import Head from 'next/head'
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -7,7 +7,7 @@ import { supabase } from "../lib/supabaseClient";
 const fallbackProjects = [
   { id: 'mentoro', title: 'Mentoro', desc: 'Interactive tutorial app for competitive programmers', tags: ['React Native', 'Firebase'] },
   { id: 'child-security', title: 'Child Security App', desc: 'Educational & safety features', tags: ['Kotlin', 'Firebase'] },
-  { id: 'ahmed-classroom', title: "Ahmed's Classroom App", desc: 'Performance optimizations — reduced load times', tags: ['Flutter'] },
+  { id: 'ahmed-classroom', title: "Ahmed's Classroom App", desc: 'Performance optimizations - reduced load times', tags: ['Flutter'] },
 ]
 
 // Edit these values. Leave empty string '' when a link is not available.
@@ -795,7 +795,7 @@ export default function Home() {
       // set a path like "userId/timestamp_filename"
       const filePath = `${user.id}/${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
 
-      // upload to 'avatars' bucket — ensure the bucket exists and is public or you handle signed URLs
+      // upload to 'avatars' bucket - ensure the bucket exists and is public or you handle signed URLs
       const { error: uploadErr } = await supabase.storage.from("avatars").upload(filePath, file, {
         cacheControl: "3600",
         upsert: true,
@@ -953,15 +953,15 @@ export default function Home() {
         {/* NEW: counts on single centered row */}
         <div style={{ marginTop: 18 }}>
           <div className="course-stats muted-2" style={{ textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 18, alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>👥 {typeof displayEnrolledCount === 'number' ? displayEnrolledCount : '—'} enrolled</span>
-            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>📚 {typeof problemCount === 'number' ? problemCount : '—'} problems</span>
+            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>&#128101; {typeof displayEnrolledCount === 'number' ? displayEnrolledCount : '-'} enrolled</span>
+            <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>&#128218; {typeof problemCount === 'number' ? problemCount : '-'} problems</span>
           </div>
 
           {/* center the action button below counts */}
           <div style={{ marginTop: 14, textAlign: 'center' }}>
             {isCpFallback ? (
               loadingCpCourse ? (
-                <button className="btn btn-cyan" disabled>Loading…</button>
+                <button className="btn btn-cyan" disabled>Loading...</button>
               ) : cpCourse ? (
                 userEnrolledOnHome ? (
                   // Only allow opening the course if user is enrolled
@@ -969,7 +969,7 @@ export default function Home() {
                 ) : (
                   // handleHomeEnroll will redirect to login if needed
                   <button className="btn btn-cyan" onClick={handleHomeEnroll} disabled={enrollActionLoading} style={{ display: 'inline-block' }}>
-                    {enrollActionLoading ? "Enrolling…" : "Enroll Now"}
+                    {enrollActionLoading ? "Enrolling..." : "Enroll Now"}
                   </button>
                 )
               ) : (
@@ -994,7 +994,7 @@ export default function Home() {
                     disabled={enrollingCourseId === courseObj.id}
                     style={{ display: 'inline-block' }}
                   >
-                    {enrollingCourseId === courseObj.id ? "Enrollingâ€¦" : "Enroll Now"}
+                    {enrollingCourseId === courseObj.id ? "Enrolling..." : "Enroll Now"}
                   </button>
                 ) : (
                   <Link href={buildLoginWithNext(`/enroll?course=${encodeURIComponent(courseObj.slug)}`)} className="btn btn-cyan" style={{ display: 'inline-block' }}>Enroll Now</Link>
@@ -1071,7 +1071,7 @@ export default function Home() {
       <Head>
         <title>Kamonasish Roy</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="description" content="Kamonasish Roy — Software Engineer, Competitive Programmer, and Mentor." />
+        <meta name="description" content="Kamonasish Roy - Software Engineer, Competitive Programmer, and Mentor." />
       </Head>
 
       {/* Global styles (unchanged except nav hover & panel top tweak & hover-card + topic styles) */}
@@ -1452,13 +1452,20 @@ input.p-2.field {
   transform: none !important;
 }
 .home-like-btn {
-  padding: 8px 10px !important;
-  border-radius: 10px !important;
-  font-size: 14px !important;
+  padding: 10px 12px !important;
+  border-radius: 12px !important;
+  font-size: 16px !important;
   text-transform: none !important;
+  color: #e5e7eb !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
   transition: box-shadow 160ms ease, background-color 160ms ease, color 160ms ease !important;
   transform: none !important;
 }
+.home-like-icon { color: #ff2d55; font-size: 20px; line-height: 1; }
+.home-like-count { color: #e5e7eb; font-weight: 600; font-size: 16px; }
+.home-like-count { color: #e5e7eb; font-weight: 600; }
 .home-blog-actions-row {
   display: flex;
   justify-content: flex-end;
@@ -1626,9 +1633,16 @@ input.p-2.field {
               <img className="w-40 h-52 sm:w-48 sm:h-64 rounded-2xl object-cover shadow-lg" src="/avatar.jpg" alt="Kamonasish Roy portrait" />
               <div className="flex-1">
                 <h1 className="text-2xl sm:text-3xl font-extrabold title">
-                  Kamonasish Roy — <span className="font-medium muted">I build fast algorithms and teach contest-winning strategies.</span>
+                  <span className="font-medium muted">Hello, I am </span>
+                  <span style={{ color: 'white' }}>Kamonasish Roy</span>
+                  <span className="font-medium muted">. Welcome to my page!</span>
                 </h1>
-                <p className="mt-3 muted">Software Engineer • Competitive Programmer • Mentor — I help students turn problem-solving into wins.</p>
+                <ul className="mt-3 muted" style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: 1.8 }}>
+                  <li>• Software Engineer</li>
+                  <li>• Competitive Programmer</li>
+                  <li>• Mentor</li>
+                  <li>• Blogger</li>
+                </ul>
                 <div className="mt-4 flex gap-3">
                   <Link className="btn btn-cyan" href="/about">About Me</Link>
                 </div>
@@ -1658,7 +1672,7 @@ input.p-2.field {
 
         {/* LEFT PROFILE PANEL (desktop) */}
         {user && profile && (
-          <aside className="profile-panel" title="Profile — click Update profile">
+          <aside className="profile-panel" title="Profile - click Update profile">
             <div style={{ textAlign: 'center', marginBottom: 10 }}>
               <div style={{ width: 84, height: 84, margin: "0 auto", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,0.02)" }}>
                 {avatarPreview || profile.avatar_url ? (
@@ -1820,7 +1834,7 @@ input.p-2.field {
                   className="p-2 field"
                   style={{ minWidth: 200 }}
                 >
-                  <option value="">— add topic to filter —</option>
+                  <option value="">- add topic to filter -</option>
                   {uniqueTopics.filter(t => !selectedTopics.includes(t)).map(t => (
                     <option key={t} value={t}>{t}</option>
                   ))}
@@ -1853,7 +1867,7 @@ input.p-2.field {
                 <div style={{ marginTop: 6 }}>
                   {selectedTopics.map((s, i) => (
                     <button key={s} onClick={() => toggleTopicFilter(s)} className="topic-chip selected" style={{ marginRight: 6 }}>
-                      {s} ×
+                      {s} x
                     </button>
                   ))}
                 </div>
@@ -1863,7 +1877,7 @@ input.p-2.field {
 
           {/* courses list */}
           {loadingCoursesList ? (
-            <div className="muted-2">Loading courses…</div>
+            <div className="muted-2">Loading courses...</div>
           ) : (coursesList && coursesList.length > 0) ? (
             <>
               {visibleCourses.length === 0 ? (
@@ -1963,7 +1977,8 @@ input.p-2.field {
                       title={homeLikedByUser[p.id] ? 'Liked' : 'Like'}
                       aria-pressed={!!homeLikedByUser[p.id]}
                     >
-                      ❤️ {homeLikesLocal[p.id] ?? p.likes ?? 0}
+                      <span className="home-like-icon">♥</span>
+                      <span className="home-like-count">{homeLikesLocal[p.id] ?? p.likes ?? 0}</span>
                     </button>
 
                     <Link href={`/blog`} className="btn btn-cyan home-read-btn" style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -1981,7 +1996,7 @@ input.p-2.field {
           </div>
         </section>
 
-        <footer className="max-w-5xl mx-auto p-6 sm:p-10">
+        <footer id="contact" className="max-w-5xl mx-auto p-6 sm:p-10">
           <div className="bg-white/5 p-6 rounded-lg shadow">
             <h4 className="font-semibold text-lg text-center title">Get in touch</h4>
            <br/>
@@ -2000,7 +2015,7 @@ input.p-2.field {
               ) : (
                 <div className="contact-disabled" aria-hidden="true">
                   <span aria-hidden="true"><IconMail /></span>
-                  <div>Email — No link available</div>
+                  <div>Email - No link available</div>
                 </div>
               )}
 
@@ -2016,7 +2031,7 @@ input.p-2.field {
               ) : (
                 <div className="contact-disabled" aria-hidden="true">
                   <span aria-hidden="true"><IconLinkedIn /></span>
-                  <div>LinkedIn — No link available</div>
+                  <div>LinkedIn - No link available</div>
                 </div>
               )}
 
@@ -2032,7 +2047,7 @@ input.p-2.field {
               ) : (
                 <div className="contact-disabled" aria-hidden="true">
                   <span aria-hidden="true"><IconGitHub /></span>
-                  <div>GitHub — No link available</div>
+                  <div>GitHub - No link available</div>
                 </div>
               )}
 
@@ -2048,7 +2063,7 @@ input.p-2.field {
               ) : (
                 <div className="contact-disabled" aria-hidden="true">
                   <span aria-hidden="true"><IconYouTube /></span>
-                  <div>YouTube — No link available</div>
+                  <div>YouTube - No link available</div>
                 </div>
               )}
 
@@ -2064,7 +2079,7 @@ input.p-2.field {
               ) : (
                 <div className="contact-disabled" aria-hidden="true">
                   <span aria-hidden="true"><IconFacebook /></span>
-                  <div>Facebook — No link available</div>
+                  <div>Facebook - No link available</div>
                 </div>
               )}
 
@@ -2080,7 +2095,7 @@ input.p-2.field {
               ) : (
                 <div className="contact-disabled" aria-hidden="true">
                   <span aria-hidden="true"><IconInstagram /></span>
-                  <div>Instagram — No link available</div>
+                  <div>Instagram - No link available</div>
                 </div>
               )}
 
@@ -2089,11 +2104,16 @@ input.p-2.field {
 
           {/* copyright center bottom */}
           <div style={{ textAlign: 'center', marginTop: 14, color: 'var(--muted-2)', fontSize: 13 }}>
-            © Kamonasish Roy
+            &copy; Kamonasish Roy
           </div>
         </footer>
       </main>
     </div>
   )
 }
+
+
+
+
+
 
