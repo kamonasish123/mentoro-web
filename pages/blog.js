@@ -974,7 +974,15 @@ export default function BlogPage() {
 
             <div className="sidebar-card">
               <h5>About</h5>
-              <p className="muted">Browse posts by category. Superadmins can write; logged-in users can comment & reply.</p>
+              <p className="muted">
+                The internet has enough noise. This blog tries to be signal — with a sense of humor.
+              </p>
+              <p className="muted" style={{ marginTop: 8 }}>
+                Here, Kamonasish Roy shares posts ranging from educational ideas to funny observations and everything in between. Readers aren’t just spectators; logged-in users can comment, reply, and be part of the conversation.
+              </p>
+              <p className="muted" style={{ marginTop: 8 }}>
+                It’s not about perfection. It’s about consistency, curiosity, and community.
+              </p>
             </div>
           </aside>
 
