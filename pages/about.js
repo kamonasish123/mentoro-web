@@ -1,6 +1,12 @@
-// pages/about.js
+﻿// pages/about.js
 import Head from 'next/head'
 import { useEffect, useState } from 'react'
+
+const toToolList = (tools) => {
+  if (!tools) return []
+  if (Array.isArray(tools)) return tools
+  return String(tools).split(',').map((t) => t.trim()).filter(Boolean)
+}
 
 /* -------------------------
    Profile data (edit as needed)
@@ -17,13 +23,65 @@ const PROFILE = {
     'In addition, I contribute as a Contest Coordinator and Problem Setter at SeriousOJ.',
   stats: { experienceYears: 1, competitiveYears: 6, solved: 5000, cfRating: 1475 },
   work: [
-    { role: 'Problem Setter and Contest Coordinator', org: 'SeriousOJ', period: '04/2024 - Present', note: 'Contributed 100+ problems' },
-    { role: 'Junior Software Engineer', org: 'I-Tech', period: '03/2023 - 02/2024', note: 'Built Flutter apps; optimized performance' },
-    { role: 'Intern', org: 'AlgoMatrix', period: '06/2022 - 11/2022', note: 'Flutter project for semi-government client' },
+    {
+      section: '',
+      items: [
+        {
+          role: 'Software Engineer',
+          org: 'I-Tech',
+          bullets: [
+            'Developed and maintained Flutter applications for production use',
+            'Improved application performance, responsiveness, and stability',
+            'Collaborated with designers and backend developers to deliver scalable solutions',
+          ],
+        },
+        {
+          role: 'Software Engineering Intern',
+          org: 'AlgoMatrix',
+          bullets: [
+            'Built a Flutter-based application for a semi-government client',
+            'Implemented core features and UI components under production constraints',
+            'Gained hands-on experience with real-world development workflows',
+          ],
+        },
+      ],
+    },
+    {
+      section: 'Competitive Programming & Community Work',
+      items: [
+        {
+          role: 'Problem Setter & Contest Coordinator',
+          org: 'SeriousOJ',
+          bullets: [
+            'Authored and reviewed 100+ competitive programming problems',
+            'Coordinated online contests, ensuring fairness, quality, and smooth execution',
+            'Contributed to problem testing, editorial preparation, and platform growth',
+          ],
+        },
+      ],
+    },
   ],
   projects: [
-    { title: 'Mentoro Android Application', period: '02/2021 - 09/2021', desc: 'React Native + Firebase; integrated Codeforces & CodeChef APIs' },
-    { title: 'Child Security Android Application', period: '2022 - 07/2022', desc: 'Kotlin + Firebase; YouTube API integration' },
+    {
+      title: 'Jononi Pharmacy App',
+      desc:
+        'This Pharmacy Management System is a complete digital solution designed to manage daily pharmacy operations efficiently. It helps handle medicine inventory, sales, customer dues, digital payments, and staff activity with proper role-based access control. The system ensures accurate stock tracking, secure data handling, and transparent accounting.',
+      tools: ['Flutter', 'Dart', 'Firebase'],
+      github: 'https://github.com/kamonasish123/jononi-pharmacy',
+    },
+    {
+      title: 'Kamonasish.com',
+      desc:
+        'This project is a full-stack mentoring and learning platform designed for competitive programming and technical education. It includes secure authentication using Supabase, a role-based admin dashboard, and a blogging system where users can read posts and participate through comments.',
+      tools: ['Next.js', 'Tailwind CSS', 'PostgreSQL'],
+      github: 'https://github.com/kamonasish123/mentoro-web',
+    },
+    {
+      title: 'Child Security Android Application',
+      desc:
+        'A child safety and educational monitoring app inspired by Google Parental Controls. The application helps parents supervise their child’s digital activities, manage screen usage, and provide safe educational content. It integrates YouTube to allow controlled access to learning videos while ensuring a secure and child-friendly environment.',
+      tools: ['Kotlin', 'Firebase', 'YouTube Data API'],
+    },
   ],
   competitive: [
     { title: 'CodeChef July Challenge 2020', note: 'Global Rank 37' },
@@ -60,9 +118,41 @@ const PROFILE = {
     'Graph Theory',
   ],
   achievements: [
-    'IEEEXtreme top placements (6th place)',
-    'CodeChef global rank 37 (July 2020)',
-    'Facebook Hacker Cup 2021 — Qualified for 2nd Round',
+    {
+      title: 'Facebook Hacker Cup 2021',
+      rankText: 'Global Rank: 1367',
+      link: 'https://web.facebook.com/codingcompetitions/hacker-cup/2021/certificate/584098462619551',
+    },
+    {
+      title: 'IEEEXtreme 14.0 Programming Contest',
+      rankText: 'Global Rank: 193',
+      link: 'https://drive.google.com/file/d/1OS_3OHh-Z1WaonIbSMsIYggikIZN2S3p/view',
+    },
+    {
+      title: 'IEEEXtreme 15.0 Programming Contest',
+      rankText: 'Global Rank: 179',
+      link: 'https://drive.google.com/file/d/1FfYpTKKWhISviXumTOBitIslhnCg3-Nq/view',
+    },
+    {
+      title: 'International Collegiate Programming Contest (ICPC) 2020, Dhaka Region',
+      rankText: 'Rank: 41st',
+      link: 'https://algo.codemarshal.org/contests/icpc-dhaka-20/standings',
+    },
+    {
+      title: 'LU TechStorm 4 Programming Contest 2021',
+      rankText: 'Champion',
+      link: 'https://toph.co/contests/training/ebarn2t/standings',
+    },
+    {
+      title: 'Judge and Problem Setter',
+      rankText: 'LU IUJPC : Sylhet Division 2024',
+      link: 'https://serious-oj.com/contest/67559b35a9f1c7000843e73f',
+    },
+    {
+      title: 'Judge',
+      rankText: 'LUCC Presents Kick & Code Intra LU Programming Contest 2025',
+      link: 'https://serious-oj.com/contest/68b47967dc7245000855279c',
+    },
   ],
   hobbies: [
     'Writing humorous and insightful blog posts',
@@ -108,7 +198,7 @@ const PROFILE = {
     ],
   },
 
-  certifications: ['Facebook Hacker Cup 2021 — Qualified for 2nd Round'],
+  certifications: ['Facebook Hacker Cup 2021 â€” Qualified for 2nd Round'],
 }
 
 /* CV path (set to your hosted PDF) */
@@ -202,8 +292,8 @@ export default function AboutPage() {
   return (
     <>
       <Head>
-        <title>{`About — ${PROFILE.name}`}</title>
-        <meta name="description" content={`${PROFILE.name} — ${PROFILE.title}. ${PROFILE.summary}`} />
+        <title>{`About - ${PROFILE.name}`}</title>
+        <meta name="description" content={`${PROFILE.name} â€” ${PROFILE.title}. ${PROFILE.summary}`} />
       </Head>
 
       {/* Match homepage background */}
@@ -258,7 +348,6 @@ export default function AboutPage() {
                   onClick={() => scrollTo(s.id)}
                   aria-current={active === s.id ? 'true' : 'false'}
                 >
-                  <span className="toc-num">{String(i + 1).padStart(2, '0')}</span>
                   <span className="toc-title">{s.title}</span>
                 </button>
               ))}
@@ -270,7 +359,6 @@ export default function AboutPage() {
             {SECTIONS.map((s, idx) => (
               <article key={s.id} id={s.id} className="section-card" tabIndex={-1} aria-labelledby={`${s.id}-h`}>
                 <header className="section-header">
-                  <div className="sec-index">{String(idx + 1).padStart(2, '0')}</div>
                   <h2 id={`${s.id}-h`} className="sec-title" tabIndex={-1}>{s.title}</h2>
                   <button className="collapse-btn" onClick={() => toggleSection(s.id)} aria-expanded={!!expanded[s.id]}>
                     {expanded[s.id] ? 'Collapse' : 'Expand'}
@@ -338,16 +426,31 @@ export default function AboutPage() {
                   )}
 
                   {s.id === 'work' && (
-                    <div className="work-list">
-                      {PROFILE.work.map((w) => (
-                        <div key={w.role} className="work-item">
-                          <div className="work-left">
-                            <div className="work-role">{w.role}</div>
-                            <div className="work-org muted">{w.org}</div>
-                          </div>
-                          <div className="work-right">
-                            <div className="work-period muted">{w.period}</div>
-                            <div className="work-note">{w.note}</div>
+                    <div>
+                      {PROFILE.work.map((section, idx) => (
+                        <div key={`${section.section || 'work'}-${idx}`} className="work-section">
+                          {section.section ? (
+                            <div className="work-section-title">{section.section}</div>
+                          ) : null}
+                          <div className="work-list">
+                            {(section.items || []).map((w) => (
+                              <div key={`${section.section}-${w.role}`} className="work-item">
+                                <div className="work-header">
+                                  <div>
+                                    <div className="work-role">{w.role}</div>
+                                    <div className="work-org muted">{w.org}</div>
+                                  </div>
+                                  {w.period ? <div className="work-period muted">{w.period}</div> : null}
+                                </div>
+                                {Array.isArray(w.bullets) && w.bullets.length > 0 ? (
+                                  <ul className="work-bullets">
+                                    {w.bullets.map((b) => <li key={b}>{b}</li>)}
+                                  </ul>
+                                ) : w.note ? (
+                                  <div className="work-note">{w.note}</div>
+                                ) : null}
+                              </div>
+                            ))}
                           </div>
                         </div>
                       ))}
@@ -356,13 +459,50 @@ export default function AboutPage() {
 
                   {s.id === 'projects' && (
                     <div className="projects-list">
-                      {PROFILE.projects.map((p) => (
+                      {PROFILE.projects.map((p) => {
+                        const githubLink = typeof p.github === 'string' ? p.github.trim() : ''
+                        return (
                         <div key={p.title} className="proj-card">
-                          <div className="proj-title">{p.title}</div>
-                          <div className="proj-period muted">{p.period}</div>
+                          <div className="proj-header">
+                            <div className="proj-title">{p.title}</div>
+                            {githubLink ? (
+                              <a
+                                className="proj-github"
+                                href={githubLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Open ${p.title} on GitHub`}
+                                title="GitHub"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                  <path d="M12 2C8.13 2 5 5.13 5 9.02c0 3.86 2.44 5.66 4.75 6.22.35.06.48-.15.48-.34 0-.17-.01-.62-.01-1.22-1.94.42-2.35-.94-2.35-.94-.32-.82-.78-1.04-.78-1.04-.64-.44.05-.43.05-.43.71.05 1.08.73 1.08.73.63 1.08 1.66.77 2.07.59.06-.46.25-.77.45-.95-1.55-.18-3.18-.78-3.18-3.47 0-.77.27-1.4.72-1.9-.07-.18-.31-.9.07-1.88 0 0 .59-.19 1.93.72.56-.16 1.16-.24 1.76-.24.6 0 1.2.08 1.76.24 1.34-.91 1.93-.72 1.93-.72.38.98.14 1.7.07 1.88.45.5.72 1.13.72 1.9 0 2.7-1.63 3.29-3.18 3.47.26.22.49.66.49 1.33 0 .96-.01 1.73-.01 1.97 0 .19.13.41.49.34C16.56 14.68 19 12.88 19 9.02 19 5.13 15.87 2 12 2z" stroke="currentColor" strokeWidth="0.5" />
+                                </svg>
+                              </a>
+                            ) : (
+                              <span
+                                className="proj-github is-disabled"
+                                aria-disabled="true"
+                                title="GitHub link not available"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                  <path d="M12 2C8.13 2 5 5.13 5 9.02c0 3.86 2.44 5.66 4.75 6.22.35.06.48-.15.48-.34 0-.17-.01-.62-.01-1.22-1.94.42-2.35-.94-2.35-.94-.32-.82-.78-1.04-.78-1.04-.64-.44.05-.43.05-.43.71.05 1.08.73 1.08.73.63 1.08 1.66.77 2.07.59.06-.46.25-.77.45-.95-1.55-.18-3.18-.78-3.18-3.47 0-.77.27-1.4.72-1.9-.07-.18-.31-.9.07-1.88 0 0 .59-.19 1.93.72.56-.16 1.16-.24 1.76-.24.6 0 1.2.08 1.76.24 1.34-.91 1.93-.72 1.93-.72.38.98.14 1.7.07 1.88.45.5.72 1.13.72 1.9 0 2.7-1.63 3.29-3.18 3.47.26.22.49.66.49 1.33 0 .96-.01 1.73-.01 1.97 0 .19.13.41.49.34C16.56 14.68 19 12.88 19 9.02 19 5.13 15.87 2 12 2z" stroke="currentColor" strokeWidth="0.5" />
+                                </svg>
+                              </span>
+                            )}
+                          </div>
                           <div className="proj-desc">{p.desc}</div>
+                          {p.tools ? (
+                            <div className="proj-tools">
+                              <div className="proj-tools-label">Tools:</div>
+                              <div className="skills-grid proj-tools-grid">
+                                {toToolList(p.tools).map((tool) => (
+                                  <span key={tool} className="skill-pill">{tool}</span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                      ))}
+                      )})}
                     </div>
                   )}
 
@@ -443,7 +583,14 @@ export default function AboutPage() {
 
                   {s.id === 'achievements' && (
                     <ul className="ach-list">
-                      {PROFILE.achievements.map((a) => <li key={a}>{a}</li>)}
+                      {PROFILE.achievements.map((a) => (
+                        <li key={a.title}>
+                          {a.title}
+                          <div className="ach-sub">
+                            • <a href={a.link} target="_blank" rel="noopener noreferrer">{a.rankText}</a>
+                          </div>
+                        </li>
+                      ))}
                     </ul>
                   )}
 
@@ -512,7 +659,6 @@ export default function AboutPage() {
         .toc-item { display:flex; gap:10px; align-items:center; padding:8px; border-radius:10px; background: transparent; border: 1px solid transparent; color: var(--muted); cursor:pointer; text-align:left; }
         .toc-item:hover { background: rgba(255,255,255,0.01); border-color: rgba(0,210,255,0.06); color: #e6f7ff; transform: translateY(-3px); }
         .toc-item.active { background: linear-gradient(90deg, rgba(0,210,255,0.06), rgba(0,210,255,0.03)); color: #00121a; border-color: rgba(0,210,255,0.12); font-weight:700; }
-        .toc-num { font-weight:800; min-width:36px; color: var(--accent); }
         .toc-title { font-size:13px; }
 
         /* Right column: serialized sections */
@@ -522,7 +668,6 @@ export default function AboutPage() {
         .section-card:hover { border-color: rgba(0,210,255,0.12); box-shadow: 0 30px 80px rgba(0,210,255,0.06); transform: translateY(-6px); }
 
         .section-header { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
-        .sec-index { font-weight:800; color: var(--accent); min-width:48px; font-size:14px; }
         .sec-title { margin:0; font-size:18px; color:#e6f7ff; }
         .collapse-btn { margin-left:auto; background: transparent; border: none; color: var(--accent); cursor:pointer; font-weight:700; }
 
@@ -536,16 +681,29 @@ export default function AboutPage() {
         .skills-grid { display:flex; flex-wrap:wrap; gap:8px; }
         .skill-pill { background: rgba(255,255,255,0.02); padding:6px 10px; border-radius:999px; color: var(--muted); font-weight:600; }
 
+        .work-section { margin-bottom: 18px; }
+        .work-section-title { font-weight: 700; color: #e6f7ff; margin-bottom: 10px; font-size: 14px; letter-spacing: 0.4px; }
         .work-list { display:flex; flex-direction:column; gap:12px; }
-        .work-item { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+        .work-item { background: var(--panel-soft); border: 1px solid rgba(255,255,255,0.04); padding: 12px; border-radius: 12px; }
+        .work-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
         .work-role { font-weight:700; color:#e6f7ff; }
         .work-org, .work-period { color: var(--muted); font-size:13px; }
         .work-note { color: var(--muted); font-size:13px; margin-top:6px; }
+        .work-bullets { margin: 8px 0 0 18px; color: var(--muted); list-style: disc; line-height: 1.5; }
+        .work-bullets li { margin-bottom: 4px; }
 
         .projects-list { display:flex; flex-direction:column; gap:12px; }
-        .proj-card { padding:10px; border-radius:10px; background: var(--panel-soft); }
+        .proj-card { padding:10px; border-radius:10px; background: var(--panel-soft); border: 1px solid rgba(255,255,255,0.04); }
+        .proj-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px; }
         .proj-title { font-weight:700; color:#e6f7ff; }
-        .proj-period, .proj-desc { color: var(--muted); font-size:13px; }
+        .proj-desc { color: var(--muted); font-size:13px; line-height:1.5; }
+        .proj-tools { margin-top:8px; }
+        .proj-tools-label { color: var(--muted); font-size:12px; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom:6px; }
+        .proj-tools-grid { }
+        .proj-github { width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); color: var(--muted); transition: transform .12s ease, border-color .12s ease, color .12s ease; }
+        .proj-github:hover { color: var(--accent); border-color: rgba(0,210,255,0.3); transform: translateY(-2px); }
+        .proj-github.is-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+        .proj-github svg { width:18px; height:18px; display:block; }
 
         .comp-list { display:flex; flex-direction:column; gap:8px; }
         .comp-item { padding:8px; border-radius:8px; background: var(--panel-soft); }
@@ -571,6 +729,8 @@ export default function AboutPage() {
         .edu-period { color: var(--muted); font-size:13px; }
 
         .research-list, .ach-list { padding-left:18px; color: var(--muted); list-style: disc; }
+        .ach-sub { margin-top: 6px; margin-left: 6px; font-size: 13px; color: var(--muted-2); }
+        .ach-sub a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
         .hobbies-list { padding-left:18px; color: var(--muted); list-style: disc; }
 
         .floating-contact { position: fixed; right: 18px; bottom: 18px; width: 56px; height: 56px; border-radius: 999px; background: linear-gradient(180deg, var(--accent), #00a8d6); color: #06202a; border: none; font-size:20px; display:flex; align-items:center; justify-content:center; box-shadow: 0 12px 40px rgba(0,210,255,0.12); cursor:pointer; z-index: 80; }
@@ -590,3 +750,4 @@ export default function AboutPage() {
     </>
   )
 }
+

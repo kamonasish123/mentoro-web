@@ -1,6 +1,8 @@
 // pages/blog/[slug].js
+import Head from 'next/head'
 import { useEffect, useRef, useState } from 'react'
-import { supabase } from '../../lib/supabaseClient' // relative import to project root
+import { createClient } from '@supabase/supabase-js'
+import { supabase } from '../../lib/supabaseClient' // client-side supabase
 
 /**
  * Page expects a `post` prop:
@@ -16,7 +18,7 @@ const fmt = (n) => {
   return String(n)
 }
 
-export default function BlogPostPage({ post }) {
+export default function BlogPostPage({ post, meta }) {
   const counted = useRef(false)           // ensure read counted only once per mount
   const [likes, setLikes] = useState(post?.likes ?? 0)
   const [liked, setLiked] = useState(false)
@@ -188,6 +190,20 @@ export default function BlogPostPage({ post }) {
   }
 
   return (
+    <>
+      <Head>
+        <title>{meta?.title || post?.title || 'Blog Post'}</title>
+        <meta name="description" content={meta?.description || ''} />
+        <meta property="og:type" content="article" />
+        <meta property="og:title" content={meta?.title || ''} />
+        <meta property="og:description" content={meta?.description || ''} />
+        <meta property="og:image" content={meta?.image || ''} />
+        <meta property="og:url" content={meta?.url || ''} />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content={meta?.title || ''} />
+        <meta name="twitter:description" content={meta?.description || ''} />
+        <meta name="twitter:image" content={meta?.image || ''} />
+      </Head>
     <article className="post-container" style={{ padding: 20 }}>
       <h1 style={{ marginBottom: 8 }}>{post?.title}</h1>
 
@@ -219,5 +235,48 @@ export default function BlogPostPage({ post }) {
 
       <div dangerouslySetInnerHTML={{ __html: post?.content ?? '' }} />
     </article>
+    </>
   )
+}
+
+function stripHtml(html) {
+  return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export async function getServerSideProps({ params, req }) {
+  const id = params?.slug
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!supabaseUrl || !supabaseAnonKey || !id) {
+    return { notFound: true }
+  }
+
+  const sb = createClient(supabaseUrl, supabaseAnonKey)
+  const { data: post, error } = await sb
+    .from('blog_posts')
+    .select('id, title, excerpt, content, category, tags, thumbnail, reads, likes, created_at, author_id')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error || !post) {
+    return { notFound: true }
+  }
+
+  const proto = (req.headers['x-forwarded-proto'] || 'https').toString()
+  const host = req.headers['x-forwarded-host'] || req.headers.host
+  const origin = host ? `${proto}://${host}` : ''
+  const title = post.title || 'Blog Post'
+  const rawDesc = post.excerpt || stripHtml(post.content || '')
+  const description = rawDesc.length > 180 ? `${rawDesc.slice(0, 177)}...` : rawDesc
+  const image = post.thumbnail
+    ? (post.thumbnail.startsWith('http') ? post.thumbnail : `${origin}${post.thumbnail}`)
+    : `${origin}/thumb-placeholder.jpg`
+  const url = origin ? `${origin}/blog/${encodeURIComponent(post.id)}` : ''
+
+  return {
+    props: {
+      post,
+      meta: { title, description, image, url },
+    },
+  }
 }

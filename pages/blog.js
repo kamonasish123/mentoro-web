@@ -33,6 +33,18 @@ function formatDateParts(ts) {
   return { date, time }
 }
 
+function getEditedParts(createdAt, updatedAt) {
+  if (!updatedAt) return null
+  const u = new Date(updatedAt)
+  if (Number.isNaN(u.getTime())) return null
+  if (createdAt) {
+    const c = new Date(createdAt)
+    if (!Number.isNaN(c.getTime()) && u.getTime() <= c.getTime()) return null
+  }
+  const dt = formatDateParts(u)
+  return dt.date ? dt : null
+}
+
 export default function BlogPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
@@ -51,6 +63,13 @@ export default function BlogPage() {
   const [repliesMap, setRepliesMap] = useState({}) // commentId => [reply]
   const [replyOpen, setReplyOpen] = useState({}) // commentId => bool
   const [replyText, setReplyText] = useState({}) // commentId => string
+  const [editingCommentId, setEditingCommentId] = useState(null)
+  const [editCommentText, setEditCommentText] = useState('')
+  const [editingReplyId, setEditingReplyId] = useState(null)
+  const [editReplyText, setEditReplyText] = useState('')
+  const [shareNotice, setShareNotice] = useState('')
+  const shareNoticeTimer = useRef(null)
+  const openFromQueryRef = useRef(false)
 
   // UI state
   const [activeCategory, setActiveCategory] = useState('All')
@@ -177,6 +196,16 @@ export default function BlogPage() {
     return () => { alive = false }
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (shareNoticeTimer.current) clearTimeout(shareNoticeTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    setShareNotice('')
+  }, [selectedPost?.id])
+
   /* keep page from scrolling when modal open */
   useEffect(() => {
     const locked = !!selectedPost || isWriteOpen
@@ -184,6 +213,18 @@ export default function BlogPage() {
     if (typeof window !== 'undefined') document.body.style.overflow = locked ? 'hidden' : ''
     return () => { if (typeof window !== 'undefined') document.body.style.overflow = prev }
   }, [selectedPost, isWriteOpen])
+
+  useEffect(() => {
+    if (!router.isReady || openFromQueryRef.current) return
+    const q = router.query.post
+    if (!q || posts.length === 0) return
+    const id = Array.isArray(q) ? q[0] : q
+    const p = posts.find((x) => String(x.id) === String(id))
+    if (p) {
+      openFromQueryRef.current = true
+      openPost(p)
+    }
+  }, [router.isReady, router.query.post, posts])
 
   /* Fetch posts from DB and load comments + likes(for current user) + replies + comment-likes-counts */
   async function loadPostsAndMeta() {
@@ -277,12 +318,14 @@ export default function BlogPage() {
           commentIds.push(c.id)
           cMap[pid] = cMap[pid] || []
           const dt = formatDateParts(c.created_at)
+          const edited = getEditedParts(c.created_at, c.updated_at)
           cMap[pid].push({
             id: c.id,
             author: authorName,
             text: c.text,
             date: dt.date,
             time: dt.time,
+            edited,
             user_id: uid,
             avatar_url: avatarUrl,
           })
@@ -296,6 +339,7 @@ export default function BlogPage() {
           const authorName = prof?.display_name || prof?.username || r.author_name || 'Anonymous'
           const avatarUrl = prof?.avatar_url || ''
           const dt = formatDateParts(r.created_at)
+          const edited = getEditedParts(r.created_at, r.updated_at)
           rMap[r.comment_id] = rMap[r.comment_id] || []
           rMap[r.comment_id].push({
             id: r.id,
@@ -303,6 +347,7 @@ export default function BlogPage() {
             text: r.text,
             date: dt.date,
             time: dt.time,
+            edited,
             user_id: uid,
             avatar_url: avatarUrl,
           })
@@ -405,7 +450,7 @@ export default function BlogPage() {
       return
     }
     if (!isSuperAdmin) {
-      alert('Only superadmin can publish posts.')
+      alert('Only Kamonasish can publish posts.')
       return
     }
 
@@ -567,12 +612,14 @@ export default function BlogPage() {
           const authorName = prof?.display_name || prof?.username || c.author_name || 'Anonymous'
           const avatarUrl = prof?.avatar_url || ''
           const dt = formatDateParts(c.created_at)
+          const edited = getEditedParts(c.created_at, c.updated_at)
           return {
             id: c.id,
             author: authorName,
             text: c.text,
             date: dt.date,
             time: dt.time,
+            edited,
             user_id: uid,
             avatar_url: avatarUrl,
           }
@@ -587,6 +634,7 @@ export default function BlogPage() {
         const authorName = prof?.display_name || prof?.username || r.author_name || 'Anonymous'
         const avatarUrl = prof?.avatar_url || ''
         const dt = formatDateParts(r.created_at)
+        const edited = getEditedParts(r.created_at, r.updated_at)
         rMap[r.comment_id] = rMap[r.comment_id] || []
         rMap[r.comment_id].push({
           id: r.id,
@@ -594,6 +642,7 @@ export default function BlogPage() {
           text: r.text,
           date: dt.date,
           time: dt.time,
+          edited,
           user_id: uid,
           avatar_url: avatarUrl,
         })
@@ -733,6 +782,175 @@ export default function BlogPage() {
     commentLikeOnce(commentId)
   }
 
+  function getShareUrl(post) {
+    if (!post) return ''
+    const origin = (typeof window !== 'undefined' && window.location?.origin) || process.env.NEXT_PUBLIC_SITE_URL || ''
+    if (!origin) return ''
+    return `${origin}/blog/${encodeURIComponent(post.id)}`
+  }
+
+  function notifyShare(msg) {
+    setShareNotice(msg)
+    if (shareNoticeTimer.current) clearTimeout(shareNoticeTimer.current)
+    shareNoticeTimer.current = setTimeout(() => setShareNotice(''), 2000)
+  }
+
+  async function copyShareUrl(post) {
+    const url = getShareUrl(post)
+    if (!url) return alert('Share link unavailable.')
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+        notifyShare('Link copied!')
+        return
+      }
+    } catch (e) {
+      // fall through to legacy copy
+    }
+    try {
+      const input = document.createElement('input')
+      input.value = url
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      notifyShare('Link copied!')
+    } catch (e) {
+      alert('Failed to copy link.')
+    }
+  }
+
+  function shareOnFacebook(post) {
+    const url = getShareUrl(post)
+    if (!url) return alert('Share link unavailable.')
+    const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`
+    window.open(fbUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  function startEditComment(comment) {
+    setEditingReplyId(null)
+    setEditReplyText('')
+    setEditingCommentId(comment.id)
+    setEditCommentText(comment.text || '')
+  }
+
+  function cancelEditComment() {
+    setEditingCommentId(null)
+    setEditCommentText('')
+  }
+
+  async function saveCommentEdit(commentId) {
+    if (!authUser) {
+      return alert('Please log in to edit comments.')
+    }
+    const nextText = (editCommentText || '').trim()
+    if (!nextText) return alert('Comment cannot be empty.')
+    try {
+      let updatedAt = null
+      const res1 = await supabase
+        .from('blog_comments')
+        .update({ text: nextText, updated_at: new Date().toISOString() })
+        .eq('id', commentId)
+        .select('id, updated_at')
+        .single()
+      if (res1.error) {
+        const msg = String(res1.error.message || '').toLowerCase()
+        if (msg.includes('updated_at') || msg.includes('column')) {
+          const res2 = await supabase
+            .from('blog_comments')
+            .update({ text: nextText })
+            .eq('id', commentId)
+            .select('id')
+            .single()
+          if (res2.error) {
+            console.warn('comment update error', res2.error)
+            return alert('Failed to update comment.')
+          }
+          updatedAt = new Date().toISOString()
+        } else {
+          console.warn('comment update error', res1.error)
+          return alert('Failed to update comment.')
+        }
+      } else {
+        updatedAt = res1.data?.updated_at || new Date().toISOString()
+      }
+      const edited = getEditedParts(null, updatedAt)
+      setComments(prev => {
+        const list = prev[selectedPost?.id] || []
+        return {
+          ...prev,
+          [selectedPost?.id]: list.map(c => (c.id === commentId ? { ...c, text: nextText, edited } : c)),
+        }
+      })
+      cancelEditComment()
+    } catch (e) {
+      console.warn('comment update failed', e)
+      alert('Failed to update comment.')
+    }
+  }
+
+  function startEditReply(reply) {
+    setEditingCommentId(null)
+    setEditCommentText('')
+    setEditingReplyId(reply.id)
+    setEditReplyText(reply.text || '')
+  }
+
+  function cancelEditReply() {
+    setEditingReplyId(null)
+    setEditReplyText('')
+  }
+
+  async function saveReplyEdit(replyId) {
+    if (!authUser) {
+      return alert('Please log in to edit replies.')
+    }
+    const nextText = (editReplyText || '').trim()
+    if (!nextText) return alert('Reply cannot be empty.')
+    try {
+      let updatedAt = null
+      const res1 = await supabase
+        .from('blog_comment_replies')
+        .update({ text: nextText, updated_at: new Date().toISOString() })
+        .eq('id', replyId)
+        .select('id, updated_at')
+        .single()
+      if (res1.error) {
+        const msg = String(res1.error.message || '').toLowerCase()
+        if (msg.includes('updated_at') || msg.includes('column')) {
+          const res2 = await supabase
+            .from('blog_comment_replies')
+            .update({ text: nextText })
+            .eq('id', replyId)
+            .select('id')
+            .single()
+          if (res2.error) {
+            console.warn('reply update error', res2.error)
+            return alert('Failed to update reply.')
+          }
+          updatedAt = new Date().toISOString()
+        } else {
+          console.warn('reply update error', res1.error)
+          return alert('Failed to update reply.')
+        }
+      } else {
+        updatedAt = res1.data?.updated_at || new Date().toISOString()
+      }
+      const edited = getEditedParts(null, updatedAt)
+      setRepliesMap(prev => {
+        const next = {}
+        for (const key of Object.keys(prev || {})) {
+          next[key] = (prev[key] || []).map(r => (r.id === replyId ? { ...r, text: nextText, edited } : r))
+        }
+        return next
+      })
+      cancelEditReply()
+    } catch (e) {
+      console.warn('reply update failed', e)
+      alert('Failed to update reply.')
+    }
+  }
+
   // top-level comment add (only logged-in)
   async function addComment(postId, author, text) {
     if (!text || !text.trim()) return
@@ -771,6 +989,7 @@ export default function BlogPage() {
           text: text.trim(),
           date: dt.date,
           time: dt.time,
+          edited: null,
           user_id: user.id,
           avatar_url: currentUserAvatar || '',
         }
@@ -779,12 +998,14 @@ export default function BlogPage() {
       }
       const createdAt = inserted?.created_at || new Date()
       const dt = formatDateParts(createdAt)
+      const edited = getEditedParts(createdAt, inserted?.updated_at)
       const newComment = {
         id: inserted.id,
         author: inserted.author_name || displayName || 'Anonymous',
         text: inserted.text,
         date: dt.date,
         time: dt.time,
+        edited,
         user_id: inserted.user_id || user.id,
         avatar_url: currentUserAvatar || '',
       }
@@ -846,6 +1067,7 @@ export default function BlogPage() {
           text: text,
           date: dt.date,
           time: dt.time,
+          edited: null,
           user_id: user.id,
           avatar_url: currentUserAvatar || '',
         }
@@ -856,12 +1078,14 @@ export default function BlogPage() {
       }
       const createdAt = inserted?.created_at || new Date()
       const dt = formatDateParts(createdAt)
+      const edited = getEditedParts(createdAt, inserted?.updated_at)
       const newReply = {
         id: inserted.id,
         author: inserted.author_name || displayName || 'Anonymous',
         text: inserted.text,
         date: dt.date,
         time: dt.time,
+        edited,
         user_id: inserted.user_id || user.id,
         avatar_url: currentUserAvatar || '',
       }
@@ -933,7 +1157,7 @@ export default function BlogPage() {
     <>
       <Head>
         <title>{mounted && currentUserName ? `${currentUserName} — Blog` : 'Blog'}</title>
-        <meta name="description" content="Your posts. Only superadmin can write. Auth users can comment." />
+        <meta name="description" content="Your posts. Only Kamonasish can write. Auth users can comment." />
       </Head>
 
       <main className="page-root">
@@ -955,8 +1179,8 @@ export default function BlogPage() {
               <button className="btn btn-outline" onClick={() => { setIsWriteOpen(true); setEditingPostId(null); setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' }) }}>Write a Post</button>
             ) : (
               <button className="btn btn-outline" onClick={() => {
-                if (!mounted || !authUser) return alert('Only superadmin can write posts. Please log in.')
-                alert('Only superadmin can write posts.')
+                if (!mounted || !authUser) return alert('Only Kamonasish can write posts. Please log in.')
+                alert('Only Kamonasish can write posts.')
               }}>Write a Post</button>
             )}
           </div>
@@ -1183,6 +1407,16 @@ export default function BlogPage() {
                     </span>
                   ) : null}
                   <div className="reads muted">{formatNumber(reads[selectedPost.id] || selectedPost.reads || 0)} reads</div>
+                  <div className="share-actions">
+                    <button className="btn btn-outline btn-sm" onClick={() => copyShareUrl(selectedPost)}>Copy Link</button>
+                    <button className="btn btn-outline btn-sm btn-icon" onClick={() => shareOnFacebook(selectedPost)} title="Share on Facebook" aria-label="Share on Facebook">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M13.5 9.5V7.2c0-1 .6-1.2 1-1.2h1.9V3h-2.6c-2.4 0-3.3 1.8-3.3 3.1v3.4H8.5v3h2.1V21h3V12.5h2.5l.4-3h-2.9z" />
+                      </svg>
+                      <span>Share</span>
+                    </button>
+                    {shareNotice ? <span className="share-note muted-2">{shareNotice}</span> : null}
+                  </div>
 
                   {/* show Edit/Delete inside modal for managers */}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
@@ -1213,7 +1447,9 @@ export default function BlogPage() {
                   <div style={{ marginTop: 12 }}>
                     {(comments[selectedPost.id] || []).length === 0 ? <p className="muted-2">No comments yet — be the first.</p> : null}
                     <div>
-                      {(comments[selectedPost.id] || []).map(c => (
+                      {(comments[selectedPost.id] || []).map(c => {
+                        const canEditComment = authUser && (isSuperAdmin || (currentUserId && c.user_id && currentUserId === c.user_id))
+                        return (
                         <div key={c.id} className="comment-item comment-root">
                           <div className="comment-top">
                             <div className="avatar" aria-hidden="true">
@@ -1225,10 +1461,31 @@ export default function BlogPage() {
                             </div>
                             <div style={{ flex: 1 }}>
                               <div className="meta">
-                                <strong style={{ color: '#e6f7ff' }}>{c.author}</strong> •
-                                <span className="muted-2">{c.date}{c.time ? ` • ${c.time}` : ''}</span>
+                                <strong style={{ color: '#e6f7ff' }}>{c.author}</strong>
+                                {selectedPost?.author_id && c.user_id && selectedPost.author_id === c.user_id ? (
+                                  <span className="author-badge">Author</span>
+                                ) : null}
+                                <span className="muted-2">• {c.date}{c.time ? ` • ${c.time}` : ''}</span>
+                                {c.edited ? (
+                                  <span className="edited-tag">• Edited</span>
+                                ) : null}
                               </div>
-                              <div style={{ marginTop: 6 }}>{c.text}</div>
+                              {editingCommentId === c.id ? (
+                                <div className="comment-edit" style={{ marginTop: 6 }}>
+                                  <textarea
+                                    className="comment-edit-input"
+                                    value={editCommentText}
+                                    onChange={(e) => setEditCommentText(e.target.value)}
+                                    rows={3}
+                                  />
+                                  <div className="comment-edit-actions">
+                                    <button className="btn btn-cyan" onClick={() => saveCommentEdit(c.id)}>Save</button>
+                                    <button className="btn btn-outline" onClick={cancelEditComment}>Cancel</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ marginTop: 6 }}>{c.text}</div>
+                              )}
 
                               <div className="comment-actions" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
                                 {/* COMMENT LIKE: disabled for visitors, tooltip/title shows "Log in to like" */}
@@ -1256,11 +1513,18 @@ export default function BlogPage() {
                                 >
                                   Reply { (repliesMap[c.id] || []).length ? `· ${(repliesMap[c.id] || []).length}` : '' }
                                 </button>
+                                {canEditComment ? (
+                                  <button className="btn btn-outline" onClick={() => startEditComment(c)} title="Edit comment">
+                                    Edit
+                                  </button>
+                                ) : null}
                               </div>
 
                               {/* replies list */}
                               <div style={{ marginTop: 10, marginLeft: 44 }}>
-                                {(repliesMap[c.id] || []).map(r => (
+                                {(repliesMap[c.id] || []).map(r => {
+                                  const canEditReply = authUser && (isSuperAdmin || (currentUserId && r.user_id && currentUserId === r.user_id))
+                                  return (
                                   <div key={r.id} className="comment-reply" style={{ marginBottom: 8 }}>
                                     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                                       <div className="avatar avatar-sm" aria-hidden="true">
@@ -1272,14 +1536,41 @@ export default function BlogPage() {
                                       </div>
                                       <div style={{ flex: 1 }}>
                                         <div className="meta">
-                                          <strong style={{ color: '#e6f7ff' }}>{r.author}</strong> •
-                                          <span className="muted-2">{r.date}{r.time ? ` • ${r.time}` : ''}</span>
+                                          <strong style={{ color: '#e6f7ff' }}>{r.author}</strong>
+                                          {selectedPost?.author_id && r.user_id && selectedPost.author_id === r.user_id ? (
+                                            <span className="author-badge">Author</span>
+                                          ) : null}
+                                          <span className="muted-2">• {r.date}{r.time ? ` • ${r.time}` : ''}</span>
+                                          {r.edited ? (
+                                            <span className="edited-tag">• Edited</span>
+                                          ) : null}
                                         </div>
-                                        <div style={{ marginTop: 6 }}>{r.text}</div>
+                                        {editingReplyId === r.id ? (
+                                          <div className="comment-edit" style={{ marginTop: 6 }}>
+                                            <input
+                                              className="reply-input"
+                                              value={editReplyText}
+                                              onChange={(e) => setEditReplyText(e.target.value)}
+                                            />
+                                            <div className="comment-edit-actions">
+                                              <button className="btn btn-cyan" onClick={() => saveReplyEdit(r.id)}>Save</button>
+                                              <button className="btn btn-outline" onClick={cancelEditReply}>Cancel</button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div style={{ marginTop: 6 }}>{r.text}</div>
+                                        )}
+                                        {canEditReply ? (
+                                          <div className="reply-actions">
+                                            <button className="btn btn-outline" onClick={() => startEditReply(r)} title="Edit reply">
+                                              Edit
+                                            </button>
+                                          </div>
+                                        ) : null}
                                       </div>
                                     </div>
                                   </div>
-                                ))}
+                                )})}
 
                                 {replyOpen[c.id] && authUser && (
                                   <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
@@ -1300,7 +1591,7 @@ export default function BlogPage() {
                             </div>
                           </div>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   </div>
                 </div>
@@ -1458,7 +1749,19 @@ export default function BlogPage() {
         .comment-item { padding:10px; border-radius:10px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); margin-bottom:8px; display:flex; gap:12px; }
         .comment-root { align-items:flex-start; }
         .comment-top { display:flex; gap:12px; width:100%; }
+        .comment-item .meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .author-badge { margin-left: 6px; padding:2px 6px; border-radius:999px; background: rgba(0,210,255,0.12); color: var(--accent-cyan); font-size:10px; font-weight:700; text-transform: uppercase; letter-spacing:0.4px; }
+        .edited-tag { color: var(--muted-2); font-size:12px; }
+        .comment-edit-input { width:100%; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--muted); padding:8px; border-radius:8px; outline:none; resize: vertical; }
+        .comment-edit-actions { display:flex; gap:8px; margin-top:8px; }
+        .reply-actions { margin-top:6px; display:flex; gap:8px; }
         .avatar { width:36px; height:36px; border-radius:50%; background: linear-gradient(90deg, rgba(0,210,255,0.06), rgba(255,255,255,0.01)); display:flex; align-items:center; justify-content:center; color: var(--muted); font-weight:700; overflow:hidden; }
+
+        .share-actions { display:flex; gap:8px; align-items:center; }
+        .share-note { font-size:12px; }
+        .btn-sm { padding:6px 10px; border-radius:8px; font-size:13px; }
+        .btn-icon { display:inline-flex; align-items:center; gap:6px; }
+        .btn-icon svg { width:16px; height:16px; fill: currentColor; }
         .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
         .avatar.avatar-sm { width:28px; height:28px; font-size:12px; }
         .comment-reply { padding: 8px; border-radius: 8px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); margin-bottom: 6px; }
