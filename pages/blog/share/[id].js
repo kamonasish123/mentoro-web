@@ -24,14 +24,16 @@ export default function BlogShareRedirect({ meta, target }) {
         <meta property="og:description" content={meta?.description || ''} />
         <meta property="og:image" content={meta?.image || ''} />
         <meta property="og:url" content={meta?.url || ''} />
+        <meta property="og:site_name" content="Kamonasish Blog" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:title" content={meta?.title || ''} />
         <meta name="twitter:description" content={meta?.description || ''} />
         <meta name="twitter:image" content={meta?.image || ''} />
-        {target ? <meta httpEquiv="refresh" content={`0; url=${target}`} /> : null}
       </Head>
       <main style={{ padding: 20, fontFamily: 'sans-serif' }}>
-        Redirecting to the post...
+        Redirecting to the post... If nothing happens, <a href={target}>click here</a>.
       </main>
     </>
   )
