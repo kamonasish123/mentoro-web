@@ -786,7 +786,14 @@ export default function BlogPage() {
     if (!post) return ''
     const origin = (typeof window !== 'undefined' && window.location?.origin) || process.env.NEXT_PUBLIC_SITE_URL || ''
     if (!origin) return ''
-    return `${origin}/blog/${encodeURIComponent(post.id)}`
+    return `${origin}/blog?post=${encodeURIComponent(post.id)}`
+  }
+
+  function getSharePreviewUrl(post) {
+    if (!post) return ''
+    const origin = (typeof window !== 'undefined' && window.location?.origin) || process.env.NEXT_PUBLIC_SITE_URL || ''
+    if (!origin) return ''
+    return `${origin}/blog/share/${encodeURIComponent(post.id)}`
   }
 
   function notifyShare(msg) {
@@ -821,7 +828,7 @@ export default function BlogPage() {
   }
 
   function shareOnFacebook(post) {
-    const url = getShareUrl(post)
+    const url = getSharePreviewUrl(post)
     if (!url) return alert('Share link unavailable.')
     const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`
     window.open(fbUrl, '_blank', 'noopener,noreferrer')
