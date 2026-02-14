@@ -64,7 +64,7 @@ export async function getServerSideProps({ params, req }) {
   const description = rawDesc.length > 180 ? `${rawDesc.slice(0, 177)}...` : rawDesc
   const image = post.thumbnail
     ? (post.thumbnail.startsWith('http') ? post.thumbnail : `${origin}${post.thumbnail}`)
-    : `${origin}/thumb-placeholder.jpg`
+    : `${origin}/avatar.jpg`
   const url = origin ? `${origin}/blog/share/${encodeURIComponent(post.id)}` : ''
   const target = origin ? `${origin}/blog?post=${encodeURIComponent(post.id)}` : `/blog?post=${encodeURIComponent(post.id)}`
 

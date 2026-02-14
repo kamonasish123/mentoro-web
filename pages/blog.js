@@ -259,7 +259,7 @@ export default function BlogPage() {
         content: p.content,
         category: p.category,
         tags: p.tags || [],
-        thumbnail: p.thumbnail || '/thumb-placeholder.jpg',
+        thumbnail: p.thumbnail || '/avatar.jpg',
         // use blog_posts.reads / likes as canonical counts
         reads: Number(p.reads ?? 0),
         likes: Number(p.likes ?? 0),
@@ -803,7 +803,7 @@ export default function BlogPage() {
   }
 
   async function copyShareUrl(post) {
-    const url = getShareUrl(post)
+    const url = getSharePreviewUrl(post)
     if (!url) return alert('Share link unavailable.')
     try {
       if (navigator?.clipboard?.writeText) {
