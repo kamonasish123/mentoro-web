@@ -62,8 +62,10 @@ export async function getServerSideProps({ params, req }) {
   const host = req.headers['x-forwarded-host'] || req.headers.host
   const origin = host ? `${proto}://${host}` : ''
   const title = post.title || 'Blog Post'
-  const rawDesc = post.excerpt || stripHtml(post.content || '')
-  const description = rawDesc.length > 180 ? `${rawDesc.slice(0, 177)}...` : rawDesc
+  const rawDesc = (post.excerpt || stripHtml(post.content || '')).trim()
+  const description = rawDesc
+    ? (rawDesc.length > 180 ? `${rawDesc.slice(0, 177)}...` : rawDesc)
+    : `Read "${title}" on Kamonasish Blog.`
   const image = post.thumbnail
     ? (post.thumbnail.startsWith('http') ? post.thumbnail : `${origin}${post.thumbnail}`)
     : `${origin}/avatar.jpg`
