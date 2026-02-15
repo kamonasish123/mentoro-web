@@ -89,6 +89,10 @@ function parseTopicsFromRow(row) {
   return [];
 }
 
+function normalizeTopic(t) {
+  return String(t || "").trim().toLowerCase();
+}
+
 function loadLocalEnrolledIds(userId) {
   if (!userId) return new Set();
   if (typeof window === "undefined") return new Set();
@@ -218,6 +222,9 @@ export default function Home() {
   const [selectedTopics, setSelectedTopics] = useState([]); // topics currently selected (order preserved)
   const [topicPickerValue, setTopicPickerValue] = useState(""); // select value for adding a topic
   const [showTopicControls, setShowTopicControls] = useState(false); // checkbox controls visibility
+  const [topicInputValue, setTopicInputValue] = useState("");
+
+  const CP_FALLBACK_TOPICS = ["Big-O & greedy", "Binary search", "Basic graphs"];
 
   // show limited cards on homepage
   const [showAllCourses, setShowAllCourses] = useState(false);
@@ -534,7 +541,28 @@ export default function Home() {
           }
         }));
 
-        if (mounted) setCoursesList(enhanced);
+        if (mounted) {
+          setCoursesList(enhanced);
+          const seen = new Set();
+          const ordered = [];
+          const addTopic = (t) => {
+            const raw = String(t || "").trim();
+            if (!raw) return;
+            const key = normalizeTopic(raw);
+            if (seen.has(key)) return;
+            seen.add(key);
+            ordered.push(raw);
+          };
+          for (const c of enhanced) {
+            const topics = parseTopicsFromRow(c);
+            if (topics.length > 0) {
+              topics.forEach(addTopic);
+            } else if ((c.slug || "").toLowerCase() === "cp-foundations") {
+              CP_FALLBACK_TOPICS.forEach(addTopic);
+            }
+          }
+          setUniqueTopics(ordered);
+        }
       } catch (err) {
         console.error("unexpected error fetching courses list", err);
         if (mounted) setCoursesList([]);
@@ -895,8 +923,7 @@ export default function Home() {
   function CourseCard({ courseObj, isCpFallback = false }) {
     // topics (admin will provide these fields)
     const topics = parseTopicsFromRow(courseObj);
-    const cpFallbackTopics = ["Big-O & greedy", "Binary search", "Basic graphs"];
-    const finalTopics = topics.length ? topics.slice(0, 8) : (isCpFallback ? cpFallbackTopics : []);
+    const finalTopics = topics.length ? topics.slice(0, 8) : (isCpFallback ? CP_FALLBACK_TOPICS : []);
 
     // counts - try multiple common field names, otherwise fallback to provided fields
     const enrolledCount = (typeof courseObj.enrolledCount === 'number') ? courseObj.enrolledCount : (typeof courseObj.enrolled_count === 'number' ? courseObj.enrolled_count : 0);
@@ -1019,8 +1046,9 @@ export default function Home() {
   /* ---------- Topic filter helpers (select & toggle) ---------- */
   function toggleTopicFilter(topic) {
     setSelectedTopics(prev => {
-      const exists = prev.includes(topic);
-      if (exists) return prev.filter(t => t !== topic);
+      const key = normalizeTopic(topic);
+      const idx = prev.findIndex(t => normalizeTopic(t) === key);
+      if (idx >= 0) return prev.filter((_, i) => i !== idx);
       return [...prev, topic];
     });
   }
@@ -1029,13 +1057,22 @@ export default function Home() {
     setSelectedTopics([]);
   }
 
+  function addTopicFromInput(raw) {
+    const v = String(raw || "").trim();
+    if (!v) return;
+    if (!selectedTopics.some(t => normalizeTopic(t) === normalizeTopic(v))) {
+      setSelectedTopics(prev => [...prev, v]);
+    }
+    setTopicInputValue("");
+  }
+
   // compute which courses to show based on selectedTopics (AND filter)
   const coursesToShow = (coursesList || []).filter(c => {
     if (!showTopicControls) return true;
     if (!selectedTopics || selectedTopics.length === 0) return true;
-    const topics = parseTopicsFromRow(c).map(String);
+    const topics = parseTopicsFromRow(c).map(normalizeTopic);
     // require all selected topics to be present (narrowing filter)
-    return selectedTopics.every(st => topics.includes(st));
+    return selectedTopics.map(normalizeTopic).every(st => topics.includes(st));
   });
 
   // helper to show first N cards unless showAllCourses is true
@@ -1457,6 +1494,16 @@ input.p-2.field {
   border: 1px solid rgba(255,255,255,0.06) !important;
   caret-color: var(--text-light) !important;
 }
+.topic-filter-input {
+  background: rgba(8,16,36,0.9) !important;
+  color: #e6f7ff !important;
+  border-color: rgba(255,255,255,0.12) !important;
+  caret-color: #e6f7ff !important;
+}
+.topic-filter-input option {
+  color: #e6f7ff;
+  background: #0b1633;
+}
 .topic-toolbar input::placeholder,
 .topic-toolbar select::placeholder,
 .topic-toolbar .field::placeholder {
@@ -1852,38 +1899,58 @@ input.p-2.field {
             </label>
 
             {showTopicControls && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <form
+                onSubmit={(e) => { e.preventDefault(); addTopicFromInput(topicInputValue); }}
+                style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+              >
                 <select
                   value={topicPickerValue}
-                  onChange={(e) => setTopicPickerValue(e.target.value)}
-                  className="p-2 field"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTopicPickerValue(v);
+                    if (!v) return;
+                    setSelectedTopics(prev => {
+                      const key = normalizeTopic(v);
+                      if (prev.some(t => normalizeTopic(t) === key)) return prev;
+                      return [...prev, v];
+                    });
+                    setTopicPickerValue("");
+                  }}
+                  className="p-2 field topic-filter-input"
                   style={{ minWidth: 200 }}
                 >
                   <option value="">- add topic to filter -</option>
-                  {uniqueTopics.filter(t => !selectedTopics.includes(t)).map(t => (
+                  {uniqueTopics.filter(t => !selectedTopics.some(s => normalizeTopic(s) === normalizeTopic(t))).map(t => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
 
                 <input
                   placeholder="Or type a topic and press Enter"
-                  className="p-2 field"
+                  className="p-2 field topic-filter-input"
                   style={{ minWidth: 240 }}
+                  value={topicInputValue}
+                  onChange={(e) => setTopicInputValue(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      const v = e.currentTarget.value.trim();
-                      if (!v) return;
-                      if (!selectedTopics.includes(v)) setSelectedTopics(prev => [...prev, v]);
-                      e.currentTarget.value = '';
+                      addTopicFromInput(topicInputValue);
                     }
                   }}
+                  onKeyUp={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addTopicFromInput(topicInputValue);
+                    }
+                  }}
+                  onBlur={() => {
+                    if (topicInputValue.trim()) addTopicFromInput(topicInputValue);
+                  }}
                 />
-
                 {selectedTopics.length > 0 ? (
                   <button className="btn" onClick={clearFilters}>Clear</button>
                 ) : null}
-              </div>
+              </form>
             )}
 
             {showTopicControls && selectedTopics.length > 0 && (
