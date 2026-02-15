@@ -43,6 +43,8 @@ export default function LoginPage() {
   // used for both "resend confirmation" responses and "reset link" debug info
   // ensure link is always a string when present
   const [resendMsg, setResendMsg] = useState(null);
+  const googleDisabledMessage =
+    "Google sign-in is currently unavailable. Please log in with email address.";
 
   async function handleEmailLogin(e) {
     e?.preventDefault();
@@ -138,27 +140,9 @@ export default function LoginPage() {
     }
   }
 
-  async function handleGoogle() {
-    setMessage(null);
-    setLoading(true);
-    try {
-      // signInWithOAuth will redirect the browser for OAuth flow.
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-      });
-
-      if (error) {
-        setMessage({ type: "error", text: error.message || "OAuth login failed." });
-        setLoading(false);
-      } else {
-        setMessage({ type: "info", text: "Opening Google sign-in…" });
-        // redirect occurs; keep loading as-is
-      }
-    } catch (err) {
-      console.error("google login err", err);
-      setMessage({ type: "error", text: "Unexpected error" });
-      setLoading(false);
-    }
+  function handleGoogle(e) {
+    e?.preventDefault?.();
+    setMessage({ type: "info", text: googleDisabledMessage });
   }
 
   // NEW: Forgot password handler
@@ -339,6 +323,15 @@ export default function LoginPage() {
 
         .small-muted { color: var(--muted-2); font-size: 0.95rem; text-align: center; }
         .google-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
+        .oauth-disabled {
+          cursor: not-allowed;
+          opacity: 0.7;
+          filter: grayscale(0.2);
+        }
+        .oauth-disabled:hover {
+          transform: none;
+          box-shadow: none;
+        }
 
         .blocked-note { margin-top: 8px; color: #ffd7d7; font-weight: 700; text-align: center; }
         .blocked-contact { margin-top: 6px; text-align: center; font-size: 0.95rem; color: #ffd7d7; }
@@ -360,8 +353,11 @@ export default function LoginPage() {
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
             <button
               onClick={handleGoogle}
-              className="btn btn-cyan"
-              disabled={loading}
+              onMouseEnter={handleGoogle}
+              onFocus={handleGoogle}
+              title={googleDisabledMessage}
+              aria-disabled="true"
+              className="btn btn-cyan oauth-disabled"
               type="button"
               style={{ width: 360, maxWidth: "100%", justifyContent: "center" }}
             >
@@ -371,7 +367,7 @@ export default function LoginPage() {
                 <path d="M119.2 325.7c-10.6-31.9-10.6-66.5 0-98.4V156.6H32.5c-37.7 73.1-37.7 158.6 0 231.7l86.7-62.6z" fill="#FBBC05"/>
                 <path d="M272 107.7c39.6-.6 77.6 14.4 106.4 41.6l79.8-79.8C406.3 22 344.9-1.6 272 0 167.2 0 76.5 56.4 32.5 142.9l86.7 70.8C140.7 155.6 200.9 107.7 272 107.7z" fill="#EA4335"/>
               </svg>
-              <span style={{ marginLeft: 8, fontSize: 14 }}>{loading ? "Opening…" : "Continue with Google"}</span>
+              <span style={{ marginLeft: 8, fontSize: 14 }}>Continue with Google</span>
             </button>
           </div>
 

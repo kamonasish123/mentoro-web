@@ -1049,14 +1049,33 @@ export default function AdminPage() {
     if (!confirm(`${block ? "Block" : "Unblock"} user ${target.email || target.id}?`)) return;
 
     try {
-      const { error } = await supabase.from("profiles").update({ is_blocked: block }).eq("id", uId);
-      if (error) throw error;
+      const s = await supabase.auth.getSession();
+      const token = s?.data?.session?.access_token;
+      if (!token) {
+        setActionMsg({ type: "error", text: "Not signed in (no session token)" });
+        return;
+      }
+
+      const res = await fetch("/api/admin/block-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: uId, block }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        const msg = (json && (json.error || json.message)) || `Failed to update block status (status ${res.status})`;
+        setActionMsg({ type: "error", text: msg });
+        return;
+      }
 
       setUsers(prev => prev.map(u => u.id === uId ? { ...u, is_blocked: block, has_profile: true } : u));
       setActionMsg({ type: "success", text: `User ${block ? "blocked" : "unblocked"}` });
     } catch (err) {
       console.error("toggleBlock err", err);
-      // If DB trigger refused (e.g., non-super_admin), surface message
       const msg = err?.message || (err?.error_description || "Failed to update block status");
       setActionMsg({ type: "error", text: msg });
     }

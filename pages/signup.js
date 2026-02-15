@@ -1,6 +1,7 @@
 // pages/signup.js
 import Head from "next/head";
-import { useState } from "react";
+import Script from "next/script";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 
@@ -26,9 +27,30 @@ export default function SignupPage() {
   // resend UI state
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMsg, setResendMsg] = useState(null);
+  const googleDisabledMessage =
+    "Google sign-in is currently unavailable. Please sign up with email address.";
 
   // whether we should show the "Resend confirmation" button immediately
   const [canResend, setCanResend] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [hcaptchaLoaded, setHcaptchaLoaded] = useState(false);
+  const [hcaptchaWidgetId, setHcaptchaWidgetId] = useState(null);
+  const hcaptchaRef = useRef(null);
+  const siteKey = process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || "";
+
+  useEffect(() => {
+    if (!hcaptchaLoaded || !siteKey || !hcaptchaRef.current) return;
+    if (hcaptchaWidgetId !== null) return;
+    if (typeof window === "undefined" || !window.hcaptcha) return;
+
+    const id = window.hcaptcha.render(hcaptchaRef.current, {
+      sitekey: siteKey,
+      callback: (token) => setCaptchaToken(token || ""),
+      "expired-callback": () => setCaptchaToken(""),
+      "error-callback": () => setCaptchaToken(""),
+    });
+    setHcaptchaWidgetId(id);
+  }, [hcaptchaLoaded, siteKey, hcaptchaWidgetId]);
 
   // create or update profile row for a given user object and provided name
   async function createProfileIfNeeded(user, name) {
@@ -99,9 +121,36 @@ export default function SignupPage() {
       setMessage({ type: "error", text: "Full name, email and password are required." });
       return;
     }
+    if (!siteKey) {
+      setMessage({ type: "error", text: "Captcha is not configured yet. Please try again later." });
+      return;
+    }
+    if (!captchaToken) {
+      setMessage({ type: "error", text: "Please complete the captcha before signing up." });
+      return;
+    }
 
     setLoading(true);
     try {
+      const verifyResp = await fetch("/api/verify-captcha", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: captchaToken }),
+      });
+      const verifyPayload = await verifyResp.json().catch(() => ({}));
+      if (!verifyResp.ok || !verifyPayload?.ok) {
+        setMessage({
+          type: "error",
+          text: verifyPayload?.error || "Captcha verification failed. Please try again.",
+        });
+        if (typeof window !== "undefined" && window.hcaptcha && hcaptchaWidgetId !== null) {
+          window.hcaptcha.reset(hcaptchaWidgetId);
+        }
+        setCaptchaToken("");
+        setLoading(false);
+        return;
+      }
+
       const trimmedEmail = String(email).trim().toLowerCase();
 
       // 1) pre-check email availability (server should indicate if it's unconfirmed)
@@ -257,24 +306,9 @@ export default function SignupPage() {
     }
   }
 
-  async function handleGoogle() {
-    setMessage(null);
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-      });
-      if (error) {
-        setMessage({ type: "error", text: error.message || "OAuth signup failed." });
-      } else {
-        setMessage({ type: "info", text: "Opening Google sign-in…" });
-      }
-    } catch (err) {
-      console.error("google oauth", err);
-      setMessage({ type: "error", text: "Unexpected error" });
-    } finally {
-      setLoading(false);
-    }
+  function handleGoogle(e) {
+    e?.preventDefault?.();
+    setMessage({ type: "info", text: googleDisabledMessage });
   }
 
   // Optional: resend confirmation (calls server endpoint /api/resend-confirmation if present)
@@ -329,6 +363,11 @@ export default function SignupPage() {
       <Head>
         <title>Sign up — Kamonasish</title>
       </Head>
+      <Script
+        src="https://js.hcaptcha.com/1/api.js?render=explicit"
+        strategy="afterInteractive"
+        onLoad={() => setHcaptchaLoaded(true)}
+      />
 
       <style jsx global>{`
         :root {
@@ -407,6 +446,17 @@ export default function SignupPage() {
 
         .small-muted { color: var(--muted-2); font-size: 0.95rem; text-align: center; }
         .google-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
+        .oauth-disabled {
+          cursor: not-allowed;
+          opacity: 0.7;
+          filter: grayscale(0.2);
+        }
+        .oauth-disabled:hover {
+          transform: none;
+          box-shadow: none;
+        }
+        .captcha-wrap { display: flex; justify-content: center; margin-top: 6px; }
+        .captcha-missing { text-align: center; font-size: 0.9rem; color: #ffd7d7; }
 
         .resend-row { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; }
         .msg { text-align: center; margin-top: 8px; font-size: 14px; }
@@ -423,8 +473,11 @@ export default function SignupPage() {
 
           <button
             onClick={handleGoogle}
-            className="btn btn-cyan"
-            disabled={loading}
+            onMouseEnter={handleGoogle}
+            onFocus={handleGoogle}
+            title={googleDisabledMessage}
+            aria-disabled="true"
+            className="btn btn-cyan oauth-disabled"
             type="button"
             style={{ marginBottom: 14, justifyContent: "center", width: "100%" }}
           >
@@ -434,7 +487,7 @@ export default function SignupPage() {
               <path d="M119.2 325.7c-10.6-31.9-10.6-66.5 0-98.4V156.6H32.5c-37.7 73.1-37.7 158.6 0 231.7l86.7-62.6z" fill="#FBBC05"/>
               <path d="M272 107.7c39.6-.6 77.6 14.4 106.4 41.6l79.8-79.8C406.3 22 344.9-1.6 272 0 167.2 0 76.5 56.4 32.5 142.9l86.7 70.8C140.7 155.6 200.9 107.7 272 107.7z" fill="#EA4335"/>
             </svg>
-            <span style={{ marginLeft: 8 }}>{loading ? "Opening…" : "Continue with Google"}</span>
+            <span style={{ marginLeft: 8 }}>Continue with Google</span>
           </button>
 
           <div style={{ margin: "10px 0 16px" }} className="small-muted">or sign up with email</div>
@@ -484,6 +537,14 @@ export default function SignupPage() {
                 </button>
               </div>
             </div>
+
+            {siteKey ? (
+              <div className="captcha-wrap">
+                <div ref={hcaptchaRef} />
+              </div>
+            ) : (
+              <div className="captcha-missing">Captcha is not configured yet. Please try again later.</div>
+            )}
 
             <div style={{ marginTop: 6 }}>
               <button className="btn btn-cyan" disabled={loading} type="submit" style={{ width: "100%", justifyContent: "center" }}>
