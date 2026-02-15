@@ -455,7 +455,22 @@ export default function SignupPage() {
           transform: none;
           box-shadow: none;
         }
-        .captcha-wrap { display: flex; justify-content: center; margin-top: 6px; }
+        .captcha-wrap { display: flex; justify-content: center; margin-top: 10px; }
+        .captcha-shell {
+          padding: 10px 12px;
+          border-radius: 12px;
+          background: rgba(10, 16, 34, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          box-shadow: inset 0 0 0 1px rgba(0, 210, 255, 0.08), 0 12px 30px rgba(0, 0, 0, 0.28);
+        }
+        .captcha-inner {
+          transform: scale(0.92);
+          transform-origin: center;
+          display: inline-block;
+        }
+        @media (max-width: 480px) {
+          .captcha-inner { transform: scale(0.85); }
+        }
         .captcha-missing { text-align: center; font-size: 0.9rem; color: #ffd7d7; }
 
         .resend-row { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; }
@@ -540,7 +555,11 @@ export default function SignupPage() {
 
             {siteKey ? (
               <div className="captcha-wrap">
-                <div ref={hcaptchaRef} />
+                <div className="captcha-shell">
+                  <div className="captcha-inner">
+                    <div ref={hcaptchaRef} />
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="captcha-missing">Captcha is not configured yet. Please try again later.</div>
