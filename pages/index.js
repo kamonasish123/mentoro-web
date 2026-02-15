@@ -1163,6 +1163,15 @@ export default function Home() {
           transform: none;
           box-shadow: none;
         }
+        .project-desc {
+          font-size: 0.85rem;
+          line-height: 1.45;
+          text-align: left;
+          display: -webkit-box;
+          -webkit-line-clamp: 5;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
         .btn:hover,
         .btn:focus {
           background: rgba(0, 210, 255, 0.10);
@@ -1415,6 +1424,9 @@ export default function Home() {
 /* responsiveness minor tweak for chip area */
 @media (max-width: 640px) {
   .topic-chip { font-size: 0.82rem; padding: 6px 8px; }
+}
+@media (max-width: 480px) {
+  .project-desc { font-size: 0.82rem; -webkit-line-clamp: 6; }
 }
 
 /* FIX: filter & typing box visibility */
@@ -1766,7 +1778,7 @@ input.p-2.field {
                       style={p.thumbnail ? { backgroundImage: `url(${p.thumbnail})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
                     ></div>
                     <h3 className="font-semibold text-lg title">{p.title}</h3>
-                    <p className="muted-2 mt-2">{p.desc}</p>
+                    <p className="project-desc muted-2 mt-2">{p.desc}</p>
                     <div className="mt-3 flex flex-wrap gap-2 justify-center">
                       {(p.tags || []).map((t, i) => (
                         <span key={i} className="text-xs px-2 py-1 bg-white/6 rounded text-white/90">{t}</span>
