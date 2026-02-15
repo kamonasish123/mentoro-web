@@ -319,7 +319,6 @@ export default function CourseRanklist() {
         <div className="top">
           <div className="title">
             <h1>{course.title}</h1>
-            <p className="muted">Course ranklist — ordered by total solves (tie-break: earliest first solve)</p>
           </div>
 
           <div className="actions" style={{ gap: 12, alignItems: "center" }}>
@@ -489,17 +488,42 @@ export default function CourseRanklist() {
         .center { text-align:center; color: var(--muted-2); padding: 40px 0; }
 
         .top {
+          position: relative;
           display:flex;
           align-items:center;
-          justify-content:space-between;
+          justify-content:flex-end;
           gap: 18px;
           margin-bottom: 18px;
+          min-height: 40px;
+        }
+        .title {
+          position: absolute;
+          left: 50%;
+          transform: translateX(-50%);
+          text-align: center;
+          width: 100%;
+          max-width: 70%;
+          pointer-events: none;
+          z-index: 1;
         }
 
-        .title h1 { color: rgba(255,255,255,0.95); margin:0; font-size: 20px; }
+        .title h1 {
+          color: #111;
+          margin: 0;
+          font-size: 24px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          background: rgba(255,255,255,0.92);
+          border: 1px solid rgba(0,0,0,0.06);
+          padding: 8px 16px;
+          border-radius: 999px;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+          display: inline-block;
+        }
         .muted { color: var(--muted-2); margin:4px 0 0; font-size: 13px; }
 
-        .actions { display:flex; gap:10px; align-items:center; }
+        .actions { display:flex; gap:10px; align-items:center; margin-left: auto; position: relative; z-index: 2; }
 
         /* buttons */
         .btn {

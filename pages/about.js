@@ -335,7 +335,7 @@ export default function AboutPage() {
 
               <div className="cta-row">
                 <a className="btn btn-cyan" href="/#contact">Contact</a>
-                <button className="btn btn-outline" onClick={handleDownloadCV}>Download CV</button>
+                <button className="btn btn-outline" onClick={handleDownloadCV} disabled title="CV coming soon">Download CV</button>
               </div>
               <div className="cv-notice" role="status" aria-live="polite">{cvNotice}</div>
             </div>

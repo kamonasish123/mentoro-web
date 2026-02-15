@@ -26,6 +26,14 @@ const ROLE_RANK = {
   super_admin: 4,
 };
 
+const normalizeCourseType = (value) => {
+  const v = String(value || '').trim().toLowerCase();
+  if (!v) return 'Free';
+  if (v === 'free' || v === 'premium' || v === 'paid') return v[0].toUpperCase() + v.slice(1);
+  if (v === 'cp' || v === 'competitive programming' || v === 'competitive') return 'Free';
+  return 'Free';
+};
+
 function isValidUrl(value) {
   if (!value) return false;
   try {
@@ -42,6 +50,13 @@ export default function AdminPage() {
   const [currentUser, setCurrentUser] = useState(null); // auth user (has email)
   const [courses, setCourses] = useState([]);
   const [problems, setProblems] = useState([]);
+  const [problemsPage, setProblemsPage] = useState(1);
+  const [problemsPageSize, setProblemsPageSize] = useState(20);
+  const [problemsTotalCount, setProblemsTotalCount] = useState(0);
+  const [problemsLoading, setProblemsLoading] = useState(false);
+  const [problemsSearch, setProblemsSearch] = useState("");
+  const [problemsDifficulty, setProblemsDifficulty] = useState("all");
+  const isSuperAdmin = (profile?.role || "").toLowerCase() === "super_admin";
 
   // USERS: pagination / filters
   const [users, setUsers] = useState([]);
@@ -81,6 +96,7 @@ export default function AdminPage() {
   // NEW: solution fields for problem (video + text)
   const [probVideo, setProbVideo] = useState("");
   const [probText, setProbText] = useState("");
+  const [probPlatformCustom, setProbPlatformCustom] = useState("");
 
   const [actionMsg, setActionMsg] = useState(null);
 
@@ -214,17 +230,49 @@ export default function AdminPage() {
     };
   }, []);
 
+  async function fetchProblemsPage(opts = {}) {
+    const { page = problemsPage, pageSize = problemsPageSize, search = problemsSearch, difficulty = problemsDifficulty } = opts;
+    setProblemsLoading(true);
+    try {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      let q = supabase
+        .from("problems")
+        .select("*", { count: "exact" })
+        .order("created_at", { ascending: false });
+      const s = String(search || "").trim();
+      if (s) {
+        const esc = s.replace(/,/g, "");
+        q = q.or(`title.ilike.%${esc}%,platform.ilike.%${esc}%`);
+      }
+      if (difficulty && difficulty !== "all") {
+        q = q.eq("difficulty", difficulty);
+      }
+      const { data, error, count } = await q.range(from, to);
+      if (error) console.warn("problems load err", error);
+      setProblems(data || []);
+      setProblemsTotalCount(typeof count === "number" ? count : 0);
+    } catch (err) {
+      console.error("fetchProblemsPage failed", err);
+    } finally {
+      setProblemsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchProblemsPage({ page: problemsPage, pageSize: problemsPageSize, search: problemsSearch, difficulty: problemsDifficulty });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [problemsPage, problemsPageSize, problemsSearch, problemsDifficulty]);
+
   async function loadCountsAndLists() {
     try {
-      const [cRes, pRes] = await Promise.all([
+      const [cRes] = await Promise.all([
         supabase.from("courses").select("*").order("created_at", { ascending: false }),
-        supabase.from("problems").select("*").order("created_at", { ascending: false }),
       ]);
       if (cRes.error) console.warn("courses load err", cRes.error);
-      if (pRes.error) console.warn("problems load err", pRes.error);
       setCourses(cRes.data || []);
-      setProblems(pRes.data || []);
       setEditingTopicsMap({});
+      await fetchProblemsPage({ page: problemsPage, pageSize: problemsPageSize });
     } catch (err) {
       console.error("loadCountsAndLists failed", err);
     }
@@ -363,6 +411,9 @@ export default function AdminPage() {
   async function createOrUpdateFeaturedProject(e) {
     e?.preventDefault?.();
     setActionMsg(null);
+    if (!isSuperAdmin) {
+      return setActionMsg({ type: "error", text: "Only super_admin can manage featured projects." });
+    }
 
     // validate
     const title = (fpTitle || "").trim();
@@ -432,6 +483,9 @@ export default function AdminPage() {
 
   async function deleteFeaturedProject(id) {
     if (!id) return;
+    if (!isSuperAdmin) {
+      return setActionMsg({ type: "error", text: "Only super_admin can manage featured projects." });
+    }
     if (!confirm("Delete this featured project? This cannot be undone.")) return;
     try {
       const { error } = await supabase.from("featured_projects").delete().eq("id", id);
@@ -450,14 +504,17 @@ export default function AdminPage() {
 
   // Drag/Drop handlers (HTML5)
   function onDragStartFp(e, id) {
+    if (!isSuperAdmin) return;
     setFpDraggingId(id);
     try { e.dataTransfer?.setData("text/plain", id); } catch (e) {}
   }
   function onDragOverFp(e, overId) {
+    if (!isSuperAdmin) return;
     e.preventDefault();
     // highlight could be added
   }
   function onDropFp(e, overId) {
+    if (!isSuperAdmin) return;
     e.preventDefault();
     const draggedId = fpDraggingId ?? e.dataTransfer?.getData("text/plain");
     if (!draggedId) return;
@@ -483,6 +540,9 @@ export default function AdminPage() {
   async function saveFeaturedOrder() {
     try {
       setActionMsg(null);
+      if (!isSuperAdmin) {
+        return setActionMsg({ type: "error", text: "Only super_admin can manage featured projects." });
+      }
       // compute new position values - assign descending integers: start from N -> 1
       const list = featuredProjects || [];
       const n = list.length;
@@ -512,6 +572,9 @@ export default function AdminPage() {
 
   async function startEditFeatured(project) {
     if (!project) return;
+    if (!isSuperAdmin) {
+      return setActionMsg({ type: "error", text: "Only super_admin can manage featured projects." });
+    }
     setFpEditingId(project.id);
     setFpTitle(project.title || "");
     setFpDesc(project.desc || "");
@@ -611,7 +674,7 @@ export default function AdminPage() {
     setCourseTitle(course.title || "");
     setCourseSlug(course.slug || "");
     setCourseDescription(course.description || "");
-    setCourseType(course.course_type || "Free");
+    setCourseType(normalizeCourseType(course.course_type));
     setCourseWeeks(course.weeks || "");
     setCourseTopics(Array.isArray(course.topics) ? [...course.topics] : []);
     setTopicInput("");
@@ -626,6 +689,8 @@ export default function AdminPage() {
 
   function resetProblemForm() {
     setProbTitle("");
+    setProbPlatform("Codeforces");
+    setProbPlatformCustom("");
     setProbLink("");
     setProbDifficulty("easy");
     setSelectedCourseId("");
@@ -638,7 +703,15 @@ export default function AdminPage() {
     if (!p) return;
     setEditingProblemId(p.id);
     setProbTitle(p.title || "");
-    setProbPlatform(p.platform || "Codeforces");
+    const knownPlatforms = ["Codeforces", "SeriousOJ", "Atcoder", "Codechef"];
+    const pPlatform = p.platform || "Codeforces";
+    if (knownPlatforms.includes(pPlatform)) {
+      setProbPlatform(pPlatform);
+      setProbPlatformCustom("");
+    } else {
+      setProbPlatform("Other");
+      setProbPlatformCustom(pPlatform);
+    }
     setProbLink(p.link || "");
     setProbDifficulty(p.difficulty || "easy");
     setProbVideo(p.video_solution || "");
@@ -659,7 +732,8 @@ export default function AdminPage() {
     e?.preventDefault();
     setActionMsg(null);
 
-    if (!probTitle || !probPlatform) return setActionMsg({ type: "error", text: "Title and platform required" });
+    const finalPlatform = probPlatform === "Other" ? (probPlatformCustom || "").trim() : probPlatform;
+    if (!probTitle || !finalPlatform) return setActionMsg({ type: "error", text: "Title and platform required" });
 
     if (probLink && !isValidUrl(probLink)) {
       return setActionMsg({ type: "error", text: "Problem link looks invalid. Use a full URL (https://...)" });
@@ -676,7 +750,7 @@ export default function AdminPage() {
       if (editingProblemId) {
         const updatePayload = {
           title: probTitle,
-          platform: probPlatform,
+          platform: finalPlatform,
           link: probLink || null,
           difficulty: probDifficulty,
           video_solution: videoVal,
@@ -692,7 +766,7 @@ export default function AdminPage() {
           console.warn("Preferred update failed, will try fallback:", error);
           const fallbackPayload = {
             title: probTitle,
-            platform: probPlatform,
+            platform: finalPlatform,
             link: probLink || null,
             difficulty: probDifficulty,
             solution: textVal || videoVal || null,
@@ -721,7 +795,7 @@ export default function AdminPage() {
 
       const payload = {
         title: probTitle,
-        platform: probPlatform,
+        platform: finalPlatform,
         link: probLink || null,
         difficulty: probDifficulty,
         created_by: profile.id,
@@ -739,7 +813,7 @@ export default function AdminPage() {
         console.warn("Preferred insert failed, will try fallback:", error);
         const fallbackPayload = {
           title: probTitle,
-          platform: probPlatform,
+          platform: finalPlatform,
           link: probLink || null,
           difficulty: probDifficulty,
           created_by: profile.id,
@@ -1136,6 +1210,7 @@ async function removeUser(uId) {
   // render
   const usersPagesCount = Math.max(1, Math.ceil((usersTotalCount || 0) / usersPageSize));
   const fpPagesCount = Math.max(1, Math.ceil((fpTotalCount || 0) / fpPageSize));
+  const problemsPagesCount = Math.max(1, Math.ceil((problemsTotalCount || 0) / problemsPageSize));
 
   return (
     <div>
@@ -1244,7 +1319,21 @@ async function removeUser(uId) {
               <h3 className="card-title">{editingProblemId ? "Edit Problem" : "Add Problem"}</h3>
               <form onSubmit={addProblem} className="space-y-3">
                 <input value={probTitle} onChange={e => setProbTitle(e.target.value)} placeholder="Problem title" className="w-full p-2 field" />
-                <input value={probPlatform} onChange={e => setProbPlatform(e.target.value)} placeholder="Platform (Codeforces / SeriousOJ)" className="w-full p-2 field" />
+                <select value={probPlatform} onChange={e => setProbPlatform(e.target.value)} className="w-full p-2 field">
+                  <option value="Codeforces">Codeforces</option>
+                  <option value="SeriousOJ">SeriousOJ</option>
+                  <option value="Atcoder">Atcoder</option>
+                  <option value="Codechef">Codechef</option>
+                  <option value="Other">Other</option>
+                </select>
+                {probPlatform === "Other" ? (
+                  <input
+                    value={probPlatformCustom}
+                    onChange={(e) => setProbPlatformCustom(e.target.value)}
+                    placeholder="Platform name..."
+                    className="w-full p-2 field"
+                  />
+                ) : null}
                 <input value={probLink} onChange={e => setProbLink(e.target.value)} placeholder="Link (optional) — any site" className="w-full p-2 field" />
 
                 <div style={{ display: "flex", gap: 8 }}>
@@ -1306,7 +1395,7 @@ async function removeUser(uId) {
               <h3 className="card-title">Quick Stats</h3>
               <div style={{ color: "var(--muted-2)", textAlign: "center" }}>
                 <div>Courses: <strong style={{ color: "white" }}>{courses.length}</strong></div>
-                <div>Problems: <strong style={{ color: "white" }}>{problems.length}</strong></div>
+                <div>Problems: <strong style={{ color: "white" }}>{problemsTotalCount}</strong></div>
                 <div>Profiles (page): <strong style={{ color: "white" }}>{users.length}</strong></div>
                 <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted-2)" }}>Logged in as <strong style={{ color: "white" }}>{profile.display_name || profile.username}</strong> ({profile.role})</div>
               </div>
@@ -1314,31 +1403,32 @@ async function removeUser(uId) {
           </section>
 
           {/* ---------- FEATURED PROJECTS SECTION (NEW) ---------- */}
-          <section className="mb-6">
-            <h3 className="centered-h">Featured Projects (manage order & pagination)</h3>
+          {isSuperAdmin ? (
+            <section className="mb-6">
+              <h3 className="centered-h">Featured Projects (manage order & pagination)</h3>
 
-            <div className="card p-3" style={{ marginBottom: 12 }}>
-              <form onSubmit={createOrUpdateFeaturedProject} style={{ display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <input value={fpTitle} onChange={e => setFpTitle(e.target.value)} placeholder="Project title" className="p-2 field" style={{ flex: 2, minWidth: 200 }} />
-                  <input value={fpThumbnail} onChange={e => setFpThumbnail(e.target.value)} placeholder="Thumbnail URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 160 }} />
-                </div>
+              <div className="card p-3" style={{ marginBottom: 12 }}>
+                <form onSubmit={createOrUpdateFeaturedProject} style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <input value={fpTitle} onChange={e => setFpTitle(e.target.value)} placeholder="Project title" className="p-2 field" style={{ flex: 2, minWidth: 200 }} />
+                    <input value={fpThumbnail} onChange={e => setFpThumbnail(e.target.value)} placeholder="Thumbnail URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 160 }} />
+                  </div>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <input value={fpUrl} onChange={e => setFpUrl(e.target.value)} placeholder="Live Demo URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
-                  <input value={fpGithubUrl} onChange={e => setFpGithubUrl(e.target.value)} placeholder="GitHub URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
-                  <input value={fpTags} onChange={e => setFpTags(e.target.value)} placeholder="Tags (comma separated)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
-                </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <input value={fpUrl} onChange={e => setFpUrl(e.target.value)} placeholder="Live Demo URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
+                    <input value={fpGithubUrl} onChange={e => setFpGithubUrl(e.target.value)} placeholder="GitHub URL (optional)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
+                    <input value={fpTags} onChange={e => setFpTags(e.target.value)} placeholder="Tags (comma separated)" className="p-2 field" style={{ flex: 1, minWidth: 200 }} />
+                  </div>
 
-                <textarea value={fpDesc} onChange={e => setFpDesc(e.target.value)} placeholder="Short description" className="p-2 field" rows={3} />
+                  <textarea value={fpDesc} onChange={e => setFpDesc(e.target.value)} placeholder="Short description" className="p-2 field" rows={3} />
 
-                <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-                  <button className="btn btn-cyan" type="submit">{fpEditingId ? "Save changes" : "Create Project"}</button>
-                  {fpEditingId && <button className="btn" type="button" onClick={cancelEditFeatured}>Cancel</button>}
-                  <button className="btn" type="button" onClick={() => { setFpTitle(""); setFpDesc(""); setFpTags(""); setFpThumbnail(""); setFpUrl(""); setFpGithubUrl(""); setFpEditingId(null); }}>Clear</button>
-                </div>
-              </form>
-            </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button className="btn btn-cyan" type="submit">{fpEditingId ? "Save changes" : "Create Project"}</button>
+                    {fpEditingId && <button className="btn" type="button" onClick={cancelEditFeatured}>Cancel</button>}
+                    <button className="btn" type="button" onClick={() => { setFpTitle(""); setFpDesc(""); setFpTags(""); setFpThumbnail(""); setFpUrl(""); setFpGithubUrl(""); setFpEditingId(null); }}>Clear</button>
+                  </div>
+                </form>
+              </div>
 
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1353,7 +1443,7 @@ async function removeUser(uId) {
 
               <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                 <button className="btn" onClick={() => loadFeaturedProjects({ page: fpPage, pageSize: fpPageSize })} disabled={fpLoading}>Refresh</button>
-                <button className="btn btn-cyan" onClick={() => saveFeaturedOrder()} disabled={fpLoading || (featuredProjects.length === 0)}>Save order</button>
+                <button className="btn btn-cyan" onClick={() => saveFeaturedOrder()} disabled={!isSuperAdmin || fpLoading || (featuredProjects.length === 0)}>Save order</button>
               </div>
             </div>
 
@@ -1368,10 +1458,10 @@ async function removeUser(uId) {
                   {featuredProjects.map(fp => (
                     <div
                       key={fp.id}
-                      draggable
-                      onDragStart={(e) => onDragStartFp(e, fp.id)}
-                      onDragOver={(e) => onDragOverFp(e, fp.id)}
-                      onDrop={(e) => onDropFp(e, fp.id)}
+                      draggable={isSuperAdmin}
+                      onDragStart={isSuperAdmin ? (e) => onDragStartFp(e, fp.id) : undefined}
+                      onDragOver={isSuperAdmin ? (e) => onDragOverFp(e, fp.id) : undefined}
+                      onDrop={isSuperAdmin ? (e) => onDropFp(e, fp.id) : undefined}
                       style={{
                         display: "flex",
                         gap: 12,
@@ -1394,8 +1484,12 @@ async function removeUser(uId) {
                         </div>
                         <div style={{ color: "var(--muted-2)", fontSize: 13, marginTop: 6 }}>{(fp.desc || "").slice(0, 140)}{(fp.desc || "").length > 140 ? "…" : ""}</div>
                         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                          <button className="btn" onClick={() => startEditFeatured(fp)}>Edit</button>
-                          <button className="btn" onClick={() => deleteFeaturedProject(fp.id)}>Delete</button>
+                          {isSuperAdmin ? (
+                            <>
+                              <button className="btn" onClick={() => startEditFeatured(fp)}>Edit</button>
+                              <button className="btn" onClick={() => deleteFeaturedProject(fp.id)}>Delete</button>
+                            </>
+                          ) : null}
                           <a href={fp.url || "#"} target="_blank" rel="noreferrer" className="btn view-btn" onClick={(e) => { if (!fp.url) e.preventDefault(); }}>Open</a>
                         </div>
                       </div>
@@ -1415,7 +1509,8 @@ async function removeUser(uId) {
                 </div>
               </div>
             </div>
-          </section>
+            </section>
+          ) : null}
           {/* ---------- END FEATURED PROJECTS SECTION ---------- */}
 
           {/* COURSES (with full edit/delete) */}
@@ -1436,7 +1531,7 @@ async function removeUser(uId) {
                       <div style={{ marginTop: 8, color: 'var(--muted-2)' }}>{c.description || "No description"}</div>
                       <div style={{ marginTop: 8 }}>
                         <strong style={{ color: 'white', fontSize: 12 }}>Meta:</strong>
-                        <span style={{ marginLeft: 8, color: 'var(--muted-2)', fontSize: 12 }}>{c.course_type || 'Free'}</span>
+                        <span style={{ marginLeft: 8, color: 'var(--muted-2)', fontSize: 12 }}>{normalizeCourseType(c.course_type)}</span>
                         <span style={{ marginLeft: 12, color: 'var(--muted-2)', fontSize: 12 }}>{c.weeks ? `${c.weeks} wk(s)` : ''}</span>
                       </div>
 
@@ -1660,8 +1755,45 @@ async function removeUser(uId) {
           {/* EXISTING PROBLEMS */}
           <section style={{ marginBottom: 40 }}>
             <h3 className="centered-h">Existing Problems</h3>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="p-2 field"
+                  placeholder="Search title or platform..."
+                  value={problemsSearch}
+                  onChange={(e) => { setProblemsSearch(e.target.value); setProblemsPage(1); }}
+                  style={{ minWidth: 240 }}
+                />
+                <select
+                  className="p-2 field"
+                  value={problemsDifficulty}
+                  onChange={(e) => { setProblemsDifficulty(e.target.value); setProblemsPage(1); }}
+                >
+                  <option value="all">All difficulties</option>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+                <label className="muted-2">Page:</label>
+                <select className="p-2 field" value={problemsPage} onChange={e => setProblemsPage(Number(e.target.value))}>
+                  {Array.from({ length: problemsPagesCount }, (_, i) => i + 1).map(pg => <option key={pg} value={pg}>{pg}</option>)}
+                </select>
+                <select className="p-2 field" value={problemsPageSize} onChange={e => { setProblemsPageSize(Number(e.target.value)); setProblemsPage(1); }}>
+                  {[20, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+              </div>
+              <div style={{ color: "var(--muted-2)" }}>
+                Showing page {problemsPage} of {problemsPagesCount} — <strong>{problemsTotalCount}</strong> total
+              </div>
+            </div>
             <div className="space-y-2">
-              {problems.map(p => (
+              {problemsLoading ? (
+                <div style={{ color: "var(--muted-2)", padding: 10 }}>Loading problems…</div>
+              ) : null}
+              {!problemsLoading && problems.length === 0 ? (
+                <div style={{ color: "var(--muted-2)", padding: 10 }}>No problems yet.</div>
+              ) : null}
+              {!problemsLoading && problems.map(p => (
                 <div key={p.id} className="p-3 problem-row">
                   <div>
                     <div className="problem-title">{p.title}</div>
@@ -1686,6 +1818,17 @@ async function removeUser(uId) {
                   </div>
                 </div>
               ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+              <div style={{ color: "var(--muted-2)" }}>
+                Page {problemsPage} / {problemsPagesCount}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn" onClick={() => setProblemsPage(1)} disabled={problemsPage <= 1}>« First</button>
+                <button className="btn" onClick={() => setProblemsPage(p => Math.max(1, p - 1))} disabled={problemsPage <= 1}>‹ Prev</button>
+                <button className="btn" onClick={() => setProblemsPage(p => Math.min(problemsPagesCount, p + 1))} disabled={problemsPage >= problemsPagesCount}>Next ›</button>
+                <button className="btn" onClick={() => setProblemsPage(problemsPagesCount)} disabled={problemsPage >= problemsPagesCount}>Last »</button>
+              </div>
             </div>
           </section>
 

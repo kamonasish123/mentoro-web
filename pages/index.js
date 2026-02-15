@@ -883,6 +883,14 @@ export default function Home() {
     setShowProfileModal(true);
   }
 
+  const normalizeCourseType = (value) => {
+    const v = String(value || '').trim().toLowerCase();
+    if (!v) return 'Free';
+    if (v === 'free' || v === 'premium' || v === 'paid') return v[0].toUpperCase() + v.slice(1);
+    if (v === 'cp' || v === 'competitive programming' || v === 'competitive') return 'Free';
+    return 'Free';
+  };
+
   /* ---------- Render helpers for course cards (unchanged) ---------- */
   function CourseCard({ courseObj, isCpFallback = false }) {
     // topics (admin will provide these fields)
@@ -896,7 +904,8 @@ export default function Home() {
     const problemCount = (typeof courseObj.problemCount === 'number') ? courseObj.problemCount : (typeof courseObj.problem_count === 'number' ? courseObj.problem_count : 0);
 
     // course type (defensive naming)
-    const courseType = courseObj.course_type || courseObj.courseType || courseObj.type || "";
+    const rawCourseType = courseObj.course_type || courseObj.courseType || courseObj.type || "";
+    const courseType = normalizeCourseType(rawCourseType);
 
     // per-course user enrolled flag (set when we enhanced coursesList)
     const userEnrolled = !!courseObj.userEnrolled;
@@ -1163,15 +1172,23 @@ export default function Home() {
           transform: none;
           box-shadow: none;
         }
-        .project-desc {
-          font-size: 0.85rem;
-          line-height: 1.45;
-          text-align: left;
-          display: -webkit-box;
-          -webkit-line-clamp: 5;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
+.project-desc {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.hero-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: center;
+  justify-items: center;
+}
+.hero-stats-grid > div { width: 100%; }
         .btn:hover,
         .btn:focus {
           background: rgba(0, 210, 255, 0.10);
@@ -1656,27 +1673,23 @@ input.p-2.field {
                   <li>• Blogger</li>
                 </ul>
                 <div className="mt-4 flex gap-3">
-                  <Link className="btn btn-cyan" href="/about">About Me</Link>
+                  <Link className="btn btn-cyan" href="/about" title="Click here to visit Portfolio">About Me</Link>
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 p-3 rounded-lg grid grid-cols-2 sm:grid-cols-4 gap-3 text-center" style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <div className="mt-6 p-3 rounded-lg hero-stats-grid text-center" style={{ background: 'rgba(255,255,255,0.02)' }}>
               <div>
                 <div className="text-sm muted-2">Experience</div>
                 <div className="font-semibold title">2+ yrs</div>
               </div>
               <div>
-                <div className="text-sm muted-2">Competitive</div>
-                <div className="font-semibold title">6+ yrs</div>
+                <div className="text-sm muted-2">Competitive Programming</div>
+                <div className="font-semibold title">7+ yrs</div>
               </div>
               <div>
                 <div className="text-sm muted-2">Solved</div>
                 <div className="font-semibold title">5000+</div>
-              </div>
-              <div>
-                <div className="text-sm muted-2">CF</div>
-                <div className="font-semibold title">Specialist (1475)</div>
               </div>
             </div>
           </div>
