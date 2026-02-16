@@ -82,32 +82,31 @@ export default async function handler(req, res) {
 
     // prevent demoting the OWNER (hard-coded email) for safety (your UI had OWNER_EMAIL)
     const OWNER_EMAIL = "rkamonasish@gmail.com";
-    // fetch target profile email
+    // fetch target profile (may not exist)
     const { data: targetProf, error: tpErr } = await supabaseAdmin
       .from("profiles")
-      .select("id, email, role, is_admin")
+      .select("id, email, role, is_admin, display_name, username")
       .eq("id", profileId)
-      .limit(1)
-      .single();
+      .maybeSingle();
 
     if (tpErr) {
-      // If target profile doesn't exist, we still allow creating/upserting it (as placeholder) but don't allow changing owner
-      // To be safe: fetch auth.users by id to inspect email
-      const { data: authRow, error: authErr } = await supabaseAdmin
+      console.warn("profiles lookup failed (non-fatal):", tpErr);
+    }
+
+    let targetEmail = (targetProf?.email || "").toLowerCase() || "";
+    if (!targetEmail) {
+      // If target profile doesn't exist, or email missing, fetch auth.users by id
+      const { data: authRow } = await supabaseAdmin
         .from("auth.users")
         .select("id, email")
         .eq("id", profileId)
         .limit(1)
         .single();
+      targetEmail = (authRow?.email || "").toLowerCase();
+    }
 
-      const targetEmail = authRow?.email || null;
-      if (targetEmail === OWNER_EMAIL) {
-        return res.status(400).json({ error: "Cannot change owner role" });
-      }
-    } else {
-      if ((targetProf.email || "").toLowerCase() === OWNER_EMAIL.toLowerCase()) {
-        return res.status(400).json({ error: "Cannot change owner role" });
-      }
+    if (targetEmail && targetEmail === OWNER_EMAIL.toLowerCase()) {
+      return res.status(400).json({ error: "Cannot change owner role" });
     }
 
     // Validate requested role allowed for operator:
@@ -122,23 +121,83 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: "Moderator cannot set that role" });
     }
 
-    // 3) Perform upsert using service role (bypasses RLS; safe because we checked authorization above).
-    const upsertPayload = {
-      id: profileId,
-      role: desired,
-      // set is_admin true for admin/super_admin, false otherwise (optional)
-      is_admin: desired === "admin" || desired === "super_admin" ? true : false,
-    };
+    // 3) Update or insert (service role bypasses RLS)
+    const isAdminFlag = desired === "admin" || desired === "super_admin";
+    let upRes = null;
+    let upErr = null;
 
-    const { data: upRes, error: upErr } = await supabaseAdmin
-      .from("profiles")
-      .upsert(upsertPayload, { onConflict: "id" })
-      .select()
-      .single();
+    if (targetProf?.id) {
+      const resUpdate = await supabaseAdmin
+        .from("profiles")
+        .update({ role: desired, is_admin: isAdminFlag })
+        .eq("id", profileId)
+        .select()
+        .single();
+      upRes = resUpdate.data;
+      upErr = resUpdate.error;
+    } else {
+      // need display_name (NOT NULL), so fetch from auth.users
+      let authUser = null;
+      try {
+        if (supabaseAdmin?.auth?.admin?.getUserById) {
+          const { data: au } = await supabaseAdmin.auth.admin.getUserById(profileId);
+          authUser = au?.user || null;
+        }
+      } catch (err) {
+        authUser = null;
+      }
+      if (!authUser) {
+        const { data: authRow } = await supabaseAdmin
+          .from("auth.users")
+          .select("id, email, raw_user_meta_data")
+          .eq("id", profileId)
+          .limit(1)
+          .single();
+        authUser = authRow
+          ? {
+              id: authRow.id,
+              email: authRow.email,
+              user_metadata: authRow.raw_user_meta_data || {},
+            }
+          : null;
+      }
+
+      if (!authUser) {
+        return res.status(404).json({ error: "Target user not found in auth.users" });
+      }
+
+      const email = authUser.email || null;
+      const metaName =
+        authUser.user_metadata?.full_name ||
+        authUser.user_metadata?.name ||
+        authUser.user_metadata?.display_name ||
+        "";
+      const fallbackName = email ? String(email).split("@")[0] : "User";
+      const displayName = String(metaName || fallbackName || "User").trim() || "User";
+      const username = String((email ? email.split("@")[0] : authUser.id) || authUser.id).trim();
+
+      const insertPayload = {
+        id: profileId,
+        role: desired,
+        is_admin: isAdminFlag,
+        email,
+        display_name: displayName,
+        username,
+        full_name: metaName || displayName,
+      };
+
+      const resInsert = await supabaseAdmin
+        .from("profiles")
+        .insert(insertPayload)
+        .select()
+        .single();
+      upRes = resInsert.data;
+      upErr = resInsert.error;
+    }
 
     if (upErr) {
-      console.error("upsert failed", upErr);
-      return res.status(500).json({ error: upErr.message || "Failed to upsert profile" });
+      console.error("set-role failed", upErr);
+      return res.status(500).json({ error: upErr.message || "Failed to update profile role" });
     }
 
     return res.status(200).json({ ok: true, data: upRes });

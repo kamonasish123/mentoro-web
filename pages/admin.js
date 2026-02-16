@@ -935,7 +935,7 @@ export default function AdminPage() {
       const target = users.find(u => u.id === profileId) || null;
       const targetRole = (target?.role || "user").toLowerCase();
       const targetEmail = target?.email ?? null;
-      const hasProfile = !!(target?.has_profile === true);
+      // has_profile no longer needed here (server handles insert/upsert)
 
       if (profileId === profile.id) {
         return { error: "You cannot change your own role" };
@@ -944,14 +944,21 @@ export default function AdminPage() {
       const check = canOperatorChangeTarget(profile.role, targetRole, role, targetEmail);
       if (!check.allowed) return { error: check.reason || "Not allowed" };
 
-      // If target has no profile row, INSERT (via upsert) may be an INSERT and could violate RLS for some operators.
-      // Only proceed with upsert-insert if operator is allowed to create profile rows.
-      if (!hasProfile && !operatorCanInsertProfile()) {
-        return { error: "Cannot create profile for this user. Please ask a super_admin to create the profile first." };
-      }
+      // server-side call (service role) to bypass RLS safely
+      const s = await supabase.auth.getSession();
+      const token = s?.data?.session?.access_token;
+      if (!token) return { error: "Not signed in (no session token)" };
 
-      const { error } = await supabase.from("profiles").upsert({ id: profileId, role }, { onConflict: "id" });
-      if (error) return { error };
+      const res = await fetch("/api/admin/set-role", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ profileId, role }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: json?.error || json?.message || "Failed to update role" };
 
       // refresh users list (current page)
       await fetchUsersPage({ page: usersPage, pageSize: usersPageSize, search: userSearch, role: userRoleFilter });
@@ -969,7 +976,7 @@ export default function AdminPage() {
     const target = users.find(u => u.id === uId) || null;
     const targetRole = (target?.role || "user").toLowerCase();
     const targetEmail = target?.email ?? null;
-    const hasProfile = !!(target?.has_profile === true);
+    // has_profile no longer needed here (server handles insert/upsert)
 
     if (!target) {
       setActionMsg({ type: "error", text: "Target user not found (refresh list)" });
@@ -990,14 +997,23 @@ export default function AdminPage() {
       return setActionMsg({ type: "error", text: check.reason || "Not allowed" });
     }
 
-    // If target has no profile row, disallow if operator cannot insert (avoid RLS INSERT error)
-    if (!hasProfile && !operatorCanInsertProfile()) {
-      return setActionMsg({ type: "error", text: "Cannot create profile for this user. Ask a super_admin to create the profile first." });
-    }
-
     try {
-      const { error } = await supabase.from("profiles").upsert({ id: uId, role: desired }, { onConflict: "id" });
-      if (error) throw error;
+      const s = await supabase.auth.getSession();
+      const token = s?.data?.session?.access_token;
+      if (!token) {
+        return setActionMsg({ type: "error", text: "Not signed in (no session token)" });
+      }
+
+      const res = await fetch("/api/admin/set-role", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ profileId: uId, role: desired }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || json?.message || "Failed to update role");
 
       // success: update local list to reflect new role and clear pending
       setUsers(prev => prev.map(x => x.id === uId ? { ...x, role: desired, has_profile: true } : x));
