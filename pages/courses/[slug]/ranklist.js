@@ -397,6 +397,8 @@ export default function CourseRanklist() {
                 const raw = (prof.display_name && prof.display_name.trim()) ? prof.display_name.trim() : "—";
                 const firstChar = raw.charAt(0) || "";
                 const restChars = raw.slice(1) || "";
+                const avatarUrl = prof.avatar_url || "";
+                const avatarLetter = (firstChar && firstChar !== "—") ? firstChar.toUpperCase() : "?";
 
                 return (
                   <div key={`${uid}-${rank}`} className={`row ${rank <= 3 ? "top-three" : ""}`}>
@@ -411,18 +413,21 @@ export default function CourseRanklist() {
                     <div className="name-col">
                       {/* Name: top-10 => first letter black + rest red; others => cyan text.
                           ONLY show display_name (no username, no fallbacks) as requested. */}
-                      {rank <= 10 ? (
-                        <div>
-                          <div style={{ fontWeight: 800, display: "inline-block", lineHeight: 1 }}>
-                            <span style={{ color: "#000000", fontWeight: 800 }}>{firstChar}</span>
-                            <span style={{ color: "#ef4444", fontWeight: 800 }}>{restChars}</span>
-                          </div>
+                      <div className="name-wrap">
+                        <div className="avatar" aria-hidden="true">
+                          {avatarUrl ? <img src={avatarUrl} alt="" /> : <span>{avatarLetter}</span>}
                         </div>
-                      ) : (
-                        <div>
-                          <div className="name-bold" style={{ color: "#06b6d4" }}>{raw}</div>
+                        <div className="name-text">
+                          {rank <= 10 ? (
+                            <div style={{ fontWeight: 800, display: "inline-block", lineHeight: 1 }}>
+                              <span style={{ color: "#000000", fontWeight: 800 }}>{firstChar}</span>
+                              <span style={{ color: "#ef4444", fontWeight: 800 }}>{restChars}</span>
+                            </div>
+                          ) : (
+                            <div className="name-bold" style={{ color: "#06b6d4" }}>{raw}</div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
 
                     <div className="inst-col">{prof.institution || "—"}</div>
@@ -584,11 +589,50 @@ export default function CourseRanklist() {
 
         .row + .row { border-top: 1px solid rgba(255,255,255,0.02); }
 
-        .rank-num { font-weight:800; color: rgba(255,255,255,0.9); }
+        .rank-num {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 34px;
+          height: 34px;
+          border-radius: 999px;
+          font-weight: 800;
+          color: #00131a;
+          background: rgba(0, 210, 255, 0.18);
+          border: 1px solid rgba(0, 210, 255, 0.35);
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+        }
         .name-bold {
           color: #22d3ee;        /* cyan-400 */
           font-weight: 800;
           letter-spacing: 0.2px;
+        }
+        .name-wrap {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .name-text { display: flex; align-items: center; }
+        .avatar {
+          width: 35px;
+          height: 35px;
+          border-radius: 50%;
+          background: linear-gradient(90deg, rgba(0,210,255,0.12), rgba(255,255,255,0.04));
+          border: 1px solid rgba(0,210,255,0.2);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #e6f7ff;
+          font-weight: 800;
+          font-size: 12px;
+          overflow: hidden;
+          flex: 0 0 auto;
+        }
+        .avatar img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
         }
         .id-muted { font-size:12px; color: var(--muted-2); margin-top:4px; }
 
