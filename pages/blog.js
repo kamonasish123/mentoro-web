@@ -1491,7 +1491,7 @@ export default function BlogPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <div style={{ marginTop: 6 }}>{c.text}</div>
+                                <div className="comment-text" style={{ marginTop: 6 }}>{c.text}</div>
                               )}
 
                               <div className="comment-actions" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -1520,7 +1520,7 @@ export default function BlogPage() {
                                 >
                                   Reply { (repliesMap[c.id] || []).length ? `· ${(repliesMap[c.id] || []).length}` : '' }
                                 </button>
-                                {canEditComment ? (
+                                {canEditComment && editingCommentId !== c.id ? (
                                   <button className="btn btn-outline" onClick={() => startEditComment(c)} title="Edit comment">
                                     Edit
                                   </button>
@@ -1554,8 +1554,9 @@ export default function BlogPage() {
                                         </div>
                                         {editingReplyId === r.id ? (
                                           <div className="comment-edit" style={{ marginTop: 6 }}>
-                                            <input
+                                            <textarea
                                               className="reply-input"
+                                              rows={2}
                                               value={editReplyText}
                                               onChange={(e) => setEditReplyText(e.target.value)}
                                             />
@@ -1565,9 +1566,9 @@ export default function BlogPage() {
                                             </div>
                                           </div>
                                         ) : (
-                                          <div style={{ marginTop: 6 }}>{r.text}</div>
+                                          <div className="comment-text" style={{ marginTop: 6 }}>{r.text}</div>
                                         )}
-                                        {canEditReply ? (
+                                        {canEditReply && editingReplyId !== r.id ? (
                                           <div className="reply-actions">
                                             <button className="btn btn-outline" onClick={() => startEditReply(r)} title="Edit reply">
                                               Edit
@@ -1580,14 +1581,15 @@ export default function BlogPage() {
                                 )})}
 
                                 {replyOpen[c.id] && authUser && (
-                                  <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                                    <input
+                                  <div className="reply-pill">
+                                    <textarea
                                       className="reply-input"
+                                      rows={2}
                                       value={replyText[c.id] || ''}
                                       onChange={(e) => setReplyText(prev => ({ ...prev, [c.id]: e.target.value }))}
                                       placeholder="Write a reply..."
                                     />
-                                    <button className="btn btn-cyan" onClick={() => addReply(c.id)}>Reply</button>
+                                    <button className="btn btn-cyan reply-btn" onClick={() => addReply(c.id)}>Reply</button>
                                   </div>
                                 )}
 
@@ -1656,10 +1658,10 @@ export default function BlogPage() {
         .excerpt { margin: 0; color: var(--muted-2); font-size: 14px; }
         .post-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:auto; }
         .engage { display:flex; gap:10px; align-items:center; }
-        .like-btn { display:inline-flex; align-items:center; gap:8px; padding:6px 8px; border-radius:10px; border:1px solid rgba(255,255,255,0.03); background: rgba(255,255,255,0.02); color: var(--muted); cursor:pointer; transition: transform .18s ease, background-color .18s ease, color .18s ease; }
-        .like-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,210,255,0.06); }
-        .like-btn.liked { background: linear-gradient(90deg, rgba(0,210,255,0.12), rgba(0,210,255,0.06)); color: var(--bg-dark); border-color: rgba(0,210,255,0.18); }
-        .heart { width:18px; height:18px; display:block; color: currentColor; }
+	        .like-btn { display:inline-flex; align-items:center; gap:8px; padding:6px 8px; border-radius:10px; border:1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.03); color: #e6f7ff; cursor:pointer; transition: transform .18s ease, background-color .18s ease, color .18s ease, border-color .18s ease; }
+	        .like-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,210,255,0.08); border-color: rgba(0,210,255,0.22); }
+	        .like-btn.liked { background: linear-gradient(90deg, rgba(239,68,68,0.2), rgba(255,255,255,0.04)); color: #ef4444; border-color: rgba(239,68,68,0.45); }
+	        .heart { width:20px; height:20px; display:block; color: currentColor; }
         .count { font-size:13px; }
         .reads, .comments { display:inline-flex; gap:6px; align-items:center; font-size:13px; color: var(--muted-2); }
         .stat { display:inline-flex; gap:8px; align-items:center; font-size:13px; color: var(--muted-2); }
@@ -1713,8 +1715,13 @@ export default function BlogPage() {
           display: flex;
           flex-direction: column;
           max-height: calc(100vh - 48px);
-          background: rgba(6,10,16,0.98);
-          box-shadow: 0 30px 90px rgba(2,6,23,0.85);
+          background: linear-gradient(180deg, rgba(6,12,20,0.98), rgba(4,10,18,0.96));
+          border: 1px solid rgba(0,210,255,0.28);
+          box-shadow:
+            inset 0 0 0 1px rgba(0,210,255,0.08),
+            0 0 0 1px rgba(0,210,255,0.12),
+            0 30px 90px rgba(2,6,23,0.85),
+            0 12px 30px rgba(0,210,255,0.08);
         }
         .modal-body.post-body-large {
           padding: 20px;
@@ -1730,11 +1737,16 @@ export default function BlogPage() {
 
         /* content card — high contrast, comfortable reading (fully opaque) */
         .content-card {
-          background: #04111a; /* solid dark card for highest contrast */
+          background: linear-gradient(180deg, rgba(6,14,24,0.95), rgba(5,12,20,0.9));
           color: #e6f7ff;
           padding: 20px;
           border-radius: 12px;
-          box-shadow: 0 8px 30px rgba(2,6,23,0.6);
+          border: 1px solid rgba(0,210,255,0.35);
+          box-shadow:
+            inset 0 0 0 1px rgba(0,210,255,0.08),
+            0 0 0 1px rgba(0,210,255,0.12),
+            0 18px 40px rgba(0,0,0,0.45),
+            0 10px 30px rgba(0,210,255,0.08);
           margin-top: 12px;
           font-size: 17px;
           line-height: 1.9;
@@ -1748,20 +1760,147 @@ export default function BlogPage() {
         .comments-section { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 14px; }
         .comments-section h4 { margin: 0 0 8px; color: #e6f7ff; }
 
-        .comment-form { display:flex; gap:8px; margin-bottom:12px; }
-        .comment-form input, .comment-form textarea { background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--muted); padding:8px; border-radius:8px; outline:none; }
-        .comment-form textarea { resize: vertical; min-height:64px; flex:1; }
-        .reply-input { flex: 1; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--muted); padding:8px; border-radius:8px; outline:none; }
+        .comment-form { display:flex; gap:8px; margin-bottom:12px; align-items: center; }
+        .comment-form input, .comment-form textarea {
+          background: rgba(6,12,20,0.7);
+          border: 1px solid rgba(255,255,255,0.45);
+          color: #e6f7ff;
+          padding: 10px 12px;
+          border-radius: 10px;
+          outline: none;
+          box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.12),
+            0 0 0 1px rgba(0,210,255,0.08),
+            0 8px 20px rgba(0,0,0,0.28),
+            0 0 12px rgba(0,210,255,0.12);
+        }
+        .comment-form textarea {
+          resize: none;
+          height: 44px;
+          min-height: 44px;
+          max-height: 44px;
+          line-height: 22px;
+          flex: 1;
+        }
+        .comment-form textarea:focus {
+          border-color: rgba(0,210,255,0.6);
+          box-shadow:
+            inset 0 0 0 1px rgba(0,210,255,0.2),
+            0 0 0 1px rgba(0,210,255,0.2),
+            0 8px 20px rgba(0,210,255,0.18);
+        }
+        .comment-form .btn.btn-cyan {
+          height: 44px;
+          padding: 0 18px;
+          border: 1px solid rgba(0,210,255,0.65);
+          box-shadow: 0 0 0 1px rgba(0,210,255,0.12), 0 8px 20px rgba(0,210,255,0.16);
+          color: #e6f7ff;
+        }
+        .comment-form .btn.btn-cyan:hover {
+          box-shadow: 0 0 0 1px rgba(0,210,255,0.2), 0 12px 28px rgba(0,210,255,0.22);
+        }
+        .reply-input {
+          flex: 1;
+          background: rgba(6,12,20,0.7);
+          border: 1px solid rgba(255,255,255,0.45);
+          color: #e6f7ff;
+          padding: 10px 12px;
+          border-radius: 10px;
+          outline: none;
+          min-height: 44px;
+          max-height: 44px;
+          line-height: 22px;
+          resize: none;
+          box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.12),
+            0 0 0 1px rgba(0,210,255,0.08),
+            0 8px 20px rgba(0,0,0,0.28),
+            0 0 12px rgba(0,210,255,0.12);
+        }
+        .reply-input:focus {
+          border-color: rgba(0,210,255,0.6);
+          box-shadow:
+            inset 0 0 0 1px rgba(0,210,255,0.2),
+            0 0 0 1px rgba(0,210,255,0.2),
+            0 8px 20px rgba(0,210,255,0.18);
+        }
+        .reply-pill {
+          margin-top: 8px;
+          display: flex;
+          align-items: stretch;
+          border: 1px solid rgba(255,255,255,0.45);
+          border-radius: 10px;
+          overflow: hidden;
+          background: rgba(6,12,20,0.7);
+          box-shadow:
+            inset 0 0 0 1px rgba(255,255,255,0.12),
+            0 0 0 1px rgba(0,210,255,0.08),
+            0 8px 20px rgba(0,0,0,0.28),
+            0 0 12px rgba(0,210,255,0.12);
+        }
+        .reply-pill:focus-within {
+          border-color: rgba(0,210,255,0.6);
+          box-shadow:
+            inset 0 0 0 1px rgba(0,210,255,0.2),
+            0 0 0 1px rgba(0,210,255,0.2),
+            0 8px 20px rgba(0,210,255,0.18);
+        }
+        .reply-pill .reply-input {
+          border: none;
+          box-shadow: none;
+          background: transparent;
+          min-height: 44px;
+          max-height: 44px;
+          resize: none;
+        }
+        .reply-pill .reply-input:focus {
+          border: none;
+          box-shadow: none;
+        }
+        .reply-pill .reply-btn {
+          height: auto;
+          padding: 0 16px;
+          border: none;
+          border-left: 1px solid rgba(255,255,255,0.25);
+          border-radius: 0;
+          box-shadow: none;
+        }
+        .reply-pill .reply-btn:hover {
+          box-shadow: none;
+        }
+        .comment-edit { width: 75%; }
+        .comment-edit .reply-input { width: 100%; }
 
-        .comment-item { padding:10px; border-radius:10px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); margin-bottom:8px; display:flex; gap:12px; }
+        .comment-item { padding:12px; border-radius:12px; background: linear-gradient(180deg, rgba(6,14,24,0.9), rgba(5,12,20,0.85)); border: 1px solid rgba(255,255,255,0.35); margin-bottom:10px; display:flex; gap:12px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.35); }
         .comment-root { align-items:flex-start; }
         .comment-top { display:flex; gap:12px; width:100%; }
         .comment-item .meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
         .author-badge { margin-left: 6px; padding:2px 6px; border-radius:999px; background: rgba(0,210,255,0.12); color: var(--accent-cyan); font-size:10px; font-weight:700; text-transform: uppercase; letter-spacing:0.4px; }
         .edited-tag { color: var(--muted-2); font-size:12px; }
-        .comment-edit-input { width:100%; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--muted); padding:8px; border-radius:8px; outline:none; resize: vertical; }
-        .comment-edit-actions { display:flex; gap:8px; margin-top:8px; }
-        .reply-actions { margin-top:6px; display:flex; gap:8px; }
+        .comment-text { white-space: pre-wrap; line-height: 1.6; }
+        .comment-edit-input { width:100%; background: rgba(6,12,20,0.7); border: 1px solid rgba(255,255,255,0.8); color: #e6f7ff; padding:8px; border-radius:10px; outline:none; resize: vertical; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
+        .comment-edit-actions { display:flex; gap:8px; margin-top:8px; justify-content: flex-start; }
+        .comment-edit-actions .btn {
+          padding: 6px 10px;
+          border-radius: 8px;
+          font-size: 12px;
+        }
+        .reply-actions { margin-top:6px; display:flex; gap:8px; align-items:center; }
+        .reply-actions .btn {
+          padding: 4px 8px;
+          font-size: 12px;
+          border-radius: 8px;
+        }
+        .reply-actions .btn.btn-cyan {
+          height: 40px;
+          padding: 0 14px;
+          border: 1px solid rgba(0,210,255,0.65);
+          box-shadow: 0 0 0 1px rgba(0,210,255,0.12), 0 8px 20px rgba(0,210,255,0.16);
+          color: #e6f7ff;
+        }
+        .reply-actions .btn.btn-cyan:hover {
+          box-shadow: 0 0 0 1px rgba(0,210,255,0.2), 0 12px 28px rgba(0,210,255,0.22);
+        }
         .avatar { width:36px; height:36px; border-radius:50%; background: linear-gradient(90deg, rgba(0,210,255,0.06), rgba(255,255,255,0.01)); display:flex; align-items:center; justify-content:center; color: var(--muted); font-weight:700; overflow:hidden; }
 
         .share-actions { display:flex; gap:8px; align-items:center; }
@@ -1771,7 +1910,7 @@ export default function BlogPage() {
         .btn-icon svg { width:16px; height:16px; fill: currentColor; }
         .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
         .avatar.avatar-sm { width:28px; height:28px; font-size:12px; }
-        .comment-reply { padding: 8px; border-radius: 8px; background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); margin-bottom: 6px; }
+        .comment-reply { padding: 10px; border-radius: 10px; background: rgba(6,12,20,0.75); border: 1px solid rgba(255,255,255,0.3); margin-bottom: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
         .comment-actions .btn { padding:6px 10px; border-radius:8px; font-size:13px; }
         .btn-like { background: transparent; border: none; color: var(--muted-2); cursor: pointer; padding: 6px 8px; border-radius: 8px; }
         .btn-like.liked { color: var(--accent-cyan); font-weight:700; }
@@ -1779,6 +1918,7 @@ export default function BlogPage() {
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
         .form-grid label { display:flex; flex-direction:column; gap:8px; color: var(--muted-2); }
         .form-grid input, .form-grid select, .form-grid textarea { padding:8px; border-radius:8px; border:1px solid var(--glass-border); background: rgba(255,255,255,0.02); color: var(--muted); outline:none; }
+        .form-grid textarea { border: 1px solid rgba(255,255,255,0.6); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); background: rgba(2,10,18,0.65); min-height: 180px; }
         .form-grid textarea { min-height: 140px; grid-column: 1 / -1; }
 
         .write-hint { margin-top: 12px; display:flex; justify-content:space-between; align-items:center; color: var(--muted-2); }
