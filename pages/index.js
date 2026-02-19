@@ -1084,8 +1084,8 @@ export default function Home() {
       const { data: ud } = await supabase.auth.getUser();
       const curUser = ud?.user ?? null;
       if (!curUser) {
-        // prompt login (same behaviour as blog page)
-        return supabase.auth.signInWithOAuth({ provider: 'google' }).catch(()=>{});
+        alert("Please log in to like this post.");
+        return;
       }
       // if already liked locally, ignore
       if (homeLikedByUser[postId]) {
@@ -1539,7 +1539,12 @@ input.p-2.field {
   transition: box-shadow 160ms ease, background-color 160ms ease, color 160ms ease !important;
   transform: none !important;
 }
-.home-like-icon { color: #ff2d55; font-size: 20px; line-height: 1; }
+.home-like-btn:disabled {
+  opacity: 0.55 !important;
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+}
+.home-like-icon { color: #ff2d55; font-size: 16px; line-height: 1; }
 .home-like-count { color: #e5e7eb; font-weight: 600; font-size: 16px; }
 .home-like-count { color: #e5e7eb; font-weight: 600; }
 .home-blog-actions-row {
@@ -2066,7 +2071,9 @@ input.p-2.field {
                     <button
                       className={`btn home-like-btn`}
                       onClick={() => handleHomeLike(p.id)}
-                      title={homeLikedByUser[p.id] ? 'Liked' : 'Like'}
+                      disabled={!user}
+                      aria-disabled={!user}
+                      title={!user ? 'Please log in to like this post.' : homeLikedByUser[p.id] ? 'Liked' : 'Like'}
                       aria-pressed={!!homeLikedByUser[p.id]}
                     >
                       <span className="home-like-icon" aria-hidden>&#10084;</span>
@@ -2203,6 +2210,8 @@ input.p-2.field {
     </div>
   )
 }
+
+
 
 
 
