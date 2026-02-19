@@ -466,7 +466,7 @@ export default function BlogPage() {
         content: draft.content || '',
         category: draft.category || 'Others',
         tags,
-        thumbnail: draft.thumbnail || '/thumb-placeholder.jpg',
+        thumbnail: draft.thumbnail || '/avatar.jpg',
         author_id: currentUserId,
       }
 
@@ -491,7 +491,7 @@ export default function BlogPage() {
           content: updated.content,
           category: updated.category,
           tags: updated.tags || [],
-          thumbnail: updated.thumbnail || '/thumb-placeholder.jpg',
+          thumbnail: updated.thumbnail || '/avatar.jpg',
           reads: Number(updated.reads ?? 0),
           likes: Number(updated.likes ?? 0),
           date: (updated.created_at || '').slice(0, 10),
@@ -527,7 +527,7 @@ export default function BlogPage() {
         content: inserted.content,
         category: inserted.category,
         tags: inserted.tags || [],
-        thumbnail: inserted.thumbnail || '/thumb-placeholder.jpg',
+        thumbnail: inserted.thumbnail || '/avatar.jpg',
         reads: Number(inserted.reads ?? 0),
         likes: Number(inserted.likes ?? 0),
         date: (inserted.created_at || '').slice(0, 10),
@@ -1956,3 +1956,4 @@ function CommentFormLogged({ postId, onAdd, currentUserName }) {
 }
 
 /* WARNING: old CommentList removed — replaced inline rendering in modal for richer features */
+

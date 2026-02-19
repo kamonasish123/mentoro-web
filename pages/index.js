@@ -597,7 +597,7 @@ export default function Home() {
           id: x.id,
           title: x.title,
           excerpt: x.excerpt,
-          thumbnail: x.thumbnail || '/thumb-placeholder.jpg',
+          thumbnail: x.thumbnail || '/avatar.jpg',
           reads: Number(x.reads ?? 0),
           likes: Number(x.likes ?? 0),
           created_at: x.created_at || '',
@@ -1714,10 +1714,10 @@ input.p-2.field {
                   <span className="font-medium muted">. Welcome to my page!</span>
                 </h1>
                 <ul className="mt-3 muted" style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: 1.8 }}>
-                  <li>• Software Engineer</li>
-                  <li>• Competitive Programmer</li>
-                  <li>• Mentor</li>
-                  <li>• Blogger</li>
+                  <li>&bull; Software Engineer</li>
+                  <li>&bull; Competitive Programmer</li>
+                  <li>&bull; Mentor</li>
+                  <li>&bull; Blogger</li>
                 </ul>
                 <div className="mt-4 flex gap-3">
                   <Link className="btn btn-cyan" href="/about" title="Click here to visit Portfolio">About Me</Link>
@@ -2069,7 +2069,7 @@ input.p-2.field {
                       title={homeLikedByUser[p.id] ? 'Liked' : 'Like'}
                       aria-pressed={!!homeLikedByUser[p.id]}
                     >
-                      <span className="home-like-icon">♥</span>
+                      <span className="home-like-icon" aria-hidden>&#10084;</span>
                       <span className="home-like-count">{homeLikesLocal[p.id] ?? p.likes ?? 0}</span>
                     </button>
 
@@ -2203,6 +2203,10 @@ input.p-2.field {
     </div>
   )
 }
+
+
+
+
 
 
 
