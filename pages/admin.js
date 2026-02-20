@@ -56,6 +56,17 @@ export default function AdminPage() {
   const [problemsLoading, setProblemsLoading] = useState(false);
   const [problemsSearch, setProblemsSearch] = useState("");
   const [problemsDifficulty, setProblemsDifficulty] = useState("all");
+  const [problemCourseQuery, setProblemCourseQuery] = useState("");
+  const [addProblemCourseId, setAddProblemCourseId] = useState("");
+  const [courseProblemCourseId, setCourseProblemCourseId] = useState("");
+  const [courseProblemRows, setCourseProblemRows] = useState([]);
+  const [courseProblemLoading, setCourseProblemLoading] = useState(false);
+  const [courseProblemSearch, setCourseProblemSearch] = useState("");
+  const [courseProblemDifficulty, setCourseProblemDifficulty] = useState("all");
+  const [courseProblemPage, setCourseProblemPage] = useState(1);
+  const [courseProblemPageSize, setCourseProblemPageSize] = useState(20);
+  const [courseProblemTotal, setCourseProblemTotal] = useState(0);
+  const [courseProblemError, setCourseProblemError] = useState("");
   const isSuperAdmin = (profile?.role || "").toLowerCase() === "super_admin";
 
   // USERS: pagination / filters
@@ -88,7 +99,8 @@ export default function AdminPage() {
   const [probPlatform, setProbPlatform] = useState("Codeforces");
   const [probLink, setProbLink] = useState("");
   const [probDifficulty, setProbDifficulty] = useState("easy");
-  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [selectedCourseIds, setSelectedCourseIds] = useState([]); // for problem -> multi course attach
+  const [assignCourseId, setAssignCourseId] = useState("");
   const [editingProblemId, setEditingProblemId] = useState(null);
 
   const [assignUserId, setAssignUserId] = useState("");
@@ -99,6 +111,8 @@ export default function AdminPage() {
   const [probPlatformCustom, setProbPlatformCustom] = useState("");
 
   const [actionMsg, setActionMsg] = useState(null);
+  const [existingProblemsNotice, setExistingProblemsNotice] = useState(null);
+  const existingProblemsNoticeTimer = useRef(null);
 
   // editing topics per existing course: { [courseId]: { editing: bool, topics: [], input: "" } }
   const [editingTopicsMap, setEditingTopicsMap] = useState({});
@@ -263,6 +277,11 @@ export default function AdminPage() {
     fetchProblemsPage({ page: problemsPage, pageSize: problemsPageSize, search: problemsSearch, difficulty: problemsDifficulty });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [problemsPage, problemsPageSize, problemsSearch, problemsDifficulty]);
+
+  useEffect(() => {
+    fetchCourseProblemsPage({ courseId: courseProblemCourseId, page: courseProblemPage, pageSize: courseProblemPageSize, search: courseProblemSearch, difficulty: courseProblemDifficulty });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseProblemCourseId, courseProblemPage, courseProblemPageSize, courseProblemSearch, courseProblemDifficulty]);
 
   async function loadCountsAndLists() {
     try {
@@ -693,10 +712,81 @@ export default function AdminPage() {
     setProbPlatformCustom("");
     setProbLink("");
     setProbDifficulty("easy");
-    setSelectedCourseId("");
+    setSelectedCourseIds([]);
     setProbVideo("");
     setProbText("");
     setEditingProblemId(null);
+  }
+
+  const filteredProblemCourses = useMemo(() => {
+    const q = (problemCourseQuery || "").trim().toLowerCase();
+    if (!q) return courses || [];
+    return (courses || []).filter(c => (c.title || "").toLowerCase().includes(q));
+  }, [courses, problemCourseQuery]);
+
+  const toggleProblemCourse = (courseId) => {
+    setSelectedCourseIds(prev => (
+      prev.includes(courseId) ? prev.filter(id => id !== courseId) : [...prev, courseId]
+    ));
+  };
+
+  const showExistingProblemsNotice = (type, text) => {
+    setExistingProblemsNotice({ type, text });
+    if (existingProblemsNoticeTimer.current) clearTimeout(existingProblemsNoticeTimer.current);
+    existingProblemsNoticeTimer.current = setTimeout(() => setExistingProblemsNotice(null), 3000);
+  };
+
+  async function fetchCourseProblemsPage(opts = {}) {
+    const {
+      courseId = courseProblemCourseId,
+      page = courseProblemPage,
+      pageSize = courseProblemPageSize,
+      search = courseProblemSearch,
+      difficulty = courseProblemDifficulty,
+    } = opts;
+
+    if (!courseId) {
+      setCourseProblemRows([]);
+      setCourseProblemTotal(0);
+      return;
+    }
+
+    setCourseProblemLoading(true);
+    setCourseProblemError("");
+    try {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      let q = supabase
+        .from("course_problems")
+        .select("id, course_id, problem_id, problems(id,title,platform,difficulty)", { count: "exact" })
+        .eq("course_id", courseId);
+
+      if (search && search.trim()) {
+        const term = search.trim();
+        q = q.or(`problems.title.ilike.%${term}%,problems.platform.ilike.%${term}%`);
+      }
+      if (difficulty && difficulty !== "all") {
+        q = q.eq("problems.difficulty", difficulty);
+      }
+
+      const { data, error, count } = await q.range(from, to);
+      if (error) {
+        console.warn("course_problems page load err", error);
+        setCourseProblemError("Failed to load course problems.");
+        setCourseProblemRows([]);
+        setCourseProblemTotal(0);
+        return;
+      }
+      setCourseProblemRows(data || []);
+      setCourseProblemTotal(typeof count === "number" ? count : 0);
+    } catch (err) {
+      console.error("fetchCourseProblemsPage failed", err);
+      setCourseProblemError("Failed to load course problems.");
+      setCourseProblemRows([]);
+      setCourseProblemTotal(0);
+    } finally {
+      setCourseProblemLoading(false);
+    }
   }
 
   function startEditProblem(p) {
@@ -716,7 +806,7 @@ export default function AdminPage() {
     setProbDifficulty(p.difficulty || "easy");
     setProbVideo(p.video_solution || "");
     setProbText(p.text_solution || p.solution || "");
-    setSelectedCourseId("");
+    setSelectedCourseIds([]);
     setTimeout(() => {
       const el = document.getElementById("problem-form");
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -827,13 +917,11 @@ export default function AdminPage() {
           .single();
 
         if (err2) throw err2;
-        if (selectedCourseId) {
-          const { error: cpErr } = await supabase.from("course_problems").insert([{
-            course_id: selectedCourseId,
-            problem_id: newProb2.id
-          }]);
-          if (cpErr) throw cpErr;
-        }
+      if (selectedCourseIds && selectedCourseIds.length > 0) {
+        const rows = selectedCourseIds.map(courseId => ({ course_id: courseId, problem_id: newProb2.id }));
+        const { error: cpErr } = await supabase.from("course_problems").insert(rows);
+        if (cpErr) throw cpErr;
+      }
 
         resetProblemForm();
         await loadCountsAndLists();
@@ -844,11 +932,9 @@ export default function AdminPage() {
         return;
       }
 
-      if (selectedCourseId) {
-        const { error: cpErr } = await supabase.from("course_problems").insert([{
-          course_id: selectedCourseId,
-          problem_id: newProb.id
-        }]);
+      if (selectedCourseIds && selectedCourseIds.length > 0) {
+        const rows = selectedCourseIds.map(courseId => ({ course_id: courseId, problem_id: newProb.id }));
+        const { error: cpErr } = await supabase.from("course_problems").insert(rows);
         if (cpErr) throw cpErr;
       }
 
@@ -863,12 +949,12 @@ export default function AdminPage() {
 
   async function assignUser(e) {
     e?.preventDefault();
-    if (!assignUserId || !selectedCourseId) return setActionMsg({ type: "error", text: "Pick a user and a course" });
+    if (!assignUserId || !assignCourseId) return setActionMsg({ type: "error", text: "Pick a user and a course" });
 
     try {
       const { error } = await supabase.from("enrollments").insert([{
         user_id: assignUserId,
-        course_id: selectedCourseId
+        course_id: assignCourseId
       }]);
       if (error) throw error;
       setActionMsg({ type: "success", text: "User assigned to course" });
@@ -1394,10 +1480,56 @@ async function removeUser(uId) {
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
                 </select>
-                <select value={selectedCourseId} onChange={(e) => setSelectedCourseId(e.target.value)} className="w-full p-2 field" disabled={!!editingProblemId} title={editingProblemId ? "Course attachment is disabled while editing" : "Attach to course (optional)"}>
-                  <option value="">— attach to course (optional) —</option>
-                  {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-                </select>
+                <div className="multi-course-wrap">
+                  <div className="multi-course-header">
+                    <input
+                      className="w-full p-2 field"
+                      placeholder="Search courses..."
+                      value={problemCourseQuery}
+                      onChange={(e) => setProblemCourseQuery(e.target.value)}
+                      disabled={!!editingProblemId}
+                    />
+                    <div className="multi-course-actions">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={!!editingProblemId || filteredProblemCourses.length === 0}
+                        onClick={() => setSelectedCourseIds(filteredProblemCourses.map(c => c.id))}
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={!!editingProblemId || selectedCourseIds.length === 0}
+                        onClick={() => setSelectedCourseIds([])}
+                      >
+                        Clear
+                      </button>
+                      <span className="multi-course-count">{selectedCourseIds.length} selected</span>
+                    </div>
+                  </div>
+                  <div className={`multi-course-list ${editingProblemId ? 'disabled' : ''}`}>
+                    {filteredProblemCourses.length === 0 ? (
+                      <div className="muted-2" style={{ padding: 8 }}>No courses match.</div>
+                    ) : (
+                      filteredProblemCourses.map(c => (
+                        <label key={c.id} className="multi-course-item">
+                          <input
+                            type="checkbox"
+                            checked={selectedCourseIds.includes(c.id)}
+                            onChange={() => toggleProblemCourse(c.id)}
+                            disabled={!!editingProblemId}
+                          />
+                          <span>{c.title}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  <div className="multi-course-hint">
+                    {editingProblemId ? "Course attachment is disabled while editing." : "Attach this problem to multiple courses."}
+                  </div>
+                </div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                   <button className="btn btn-cyan" type="submit">{editingProblemId ? "Save Changes" : "Add Problem"}</button>
                   {editingProblemId && <button className="btn" type="button" onClick={cancelEditProblem}>Cancel</button>}
@@ -1415,7 +1547,7 @@ async function removeUser(uId) {
                   <option value="">— pick user —</option>
                   {users.map(u => <option key={u.id} value={u.id}>{u.display_name || u.username || (u.email || u.id)}</option>)}
                 </select>
-                <select className="w-full p-2 field" value={selectedCourseId} onChange={e => setSelectedCourseId(e.target.value)}>
+                <select className="w-full p-2 field" value={assignCourseId} onChange={e => setAssignCourseId(e.target.value)}>
                   <option value="">— pick course —</option>
                   {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
                 </select>
@@ -1428,11 +1560,23 @@ async function removeUser(uId) {
             {/* NOTE: Set-by-email removed — inline user list handles role changes now */}
             <div className="card p-4 hover-card">
               <h3 className="card-title">Quick Stats</h3>
-              <div style={{ color: "var(--muted-2)", textAlign: "center" }}>
-                <div>Courses: <strong style={{ color: "white" }}>{courses.length}</strong></div>
-                <div>Problems: <strong style={{ color: "white" }}>{problemsTotalCount}</strong></div>
-                <div>Profiles (page): <strong style={{ color: "white" }}>{users.length}</strong></div>
-                <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted-2)" }}>Logged in as <strong style={{ color: "white" }}>{profile.display_name || profile.username}</strong> ({profile.role})</div>
+              <div className="quick-stats">
+                <div className="quick-stat">
+                  <span>Total Courses</span>
+                  <strong>{courses.length}</strong>
+                </div>
+                <div className="quick-stat">
+                  <span>Total Problems</span>
+                  <strong>{problemsTotalCount}</strong>
+                </div>
+                <div className="quick-stat">
+                  <span>Total Users</span>
+                  <strong>{users.length}</strong>
+                </div>
+                <div className="quick-stat-note">
+                  Logged in as <span className="quick-stat-user">{profile.display_name || profile.username}</span>
+                  <span className="quick-stat-role">{String(profile.role || '').replace('_', ' ')}</span>
+                </div>
               </div>
             </div>
           </section>
@@ -1787,6 +1931,99 @@ async function removeUser(uId) {
             </div>
           </section>
 
+          {/* COURSE-WISE PROBLEM LIST */}
+          <section style={{ marginBottom: 40 }}>
+            <h3 className="centered-h">Course Problem List</h3>
+            <div className="card p-4 hover-card">
+              <div className="course-problem-toolbar">
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <select
+                    className="p-2 field"
+                    value={courseProblemCourseId}
+                    onChange={(e) => { setCourseProblemCourseId(e.target.value); setCourseProblemPage(1); }}
+                  >
+                    <option value="">— select course —</option>
+                    {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                  <input
+                    className="p-2 field"
+                    placeholder="Search problem title or platform..."
+                    value={courseProblemSearch}
+                    onChange={(e) => { setCourseProblemSearch(e.target.value); setCourseProblemPage(1); }}
+                    style={{ minWidth: 240 }}
+                  />
+                  <select
+                    className="p-2 field"
+                    value={courseProblemDifficulty}
+                    onChange={(e) => { setCourseProblemDifficulty(e.target.value); setCourseProblemPage(1); }}
+                  >
+                    <option value="all">All difficulties</option>
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                  </select>
+                  <select
+                    className="p-2 field"
+                    value={courseProblemPageSize}
+                    onChange={(e) => { setCourseProblemPageSize(Number(e.target.value)); setCourseProblemPage(1); }}
+                  >
+                    {[20, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+                  </select>
+                </div>
+                <button className="btn btn-sm" onClick={() => fetchCourseProblemsPage({ courseId: courseProblemCourseId, page: courseProblemPage, pageSize: courseProblemPageSize, search: courseProblemSearch, difficulty: courseProblemDifficulty })} type="button" disabled={!courseProblemCourseId}>Refresh</button>
+              </div>
+
+              {!courseProblemCourseId ? (
+                <div style={{ color: "var(--muted-2)", padding: 10 }}>Select a course to view problems.</div>
+              ) : courseProblemLoading ? (
+                <div style={{ color: "var(--muted-2)", padding: 10 }}>Loading course problems...</div>
+              ) : courseProblemError ? (
+                <div style={{ color: "var(--muted-2)", padding: 10 }}>{courseProblemError}</div>
+              ) : courseProblemRows.length === 0 ? (
+                <div style={{ color: "var(--muted-2)", padding: 10 }}>No course problems found.</div>
+              ) : (
+                <div className="course-problem-list">
+                  {courseProblemRows.map(item => (
+                    <div key={item.id} className="course-problem-item">
+                      <div>
+                        <div className="problem-title">{item.problems?.title || "Untitled problem"}</div>
+                        <div className="problem-sub">{item.problems?.platform || "Unknown"} • {item.problems?.difficulty || "unknown"}</div>
+                      </div>
+                      <button
+                        className="btn btn-sm"
+                        type="button"
+                        onClick={async () => {
+                          if (!confirm("Remove this problem from the course?")) return;
+                          const { error } = await supabase
+                            .from("course_problems")
+                            .delete()
+                            .eq("id", item.id);
+                          if (error) {
+                            return setActionMsg({ type: "error", text: error.message || "Remove failed" });
+                          }
+                          fetchCourseProblemsPage({ courseId: courseProblemCourseId, page: courseProblemPage, pageSize: courseProblemPageSize, search: courseProblemSearch, difficulty: courseProblemDifficulty });
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+                    <div style={{ color: "var(--muted-2)" }}>
+                      Page {courseProblemPage} / {Math.max(1, Math.ceil((courseProblemTotal || 0) / courseProblemPageSize))}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button className="btn" onClick={() => setCourseProblemPage(1)} disabled={courseProblemPage <= 1}>« First</button>
+                      <button className="btn" onClick={() => setCourseProblemPage(p => Math.max(1, p - 1))} disabled={courseProblemPage <= 1}>‹ Prev</button>
+                      <button className="btn" onClick={() => setCourseProblemPage(p => Math.min(Math.max(1, Math.ceil((courseProblemTotal || 0) / courseProblemPageSize)), p + 1))} disabled={courseProblemPage >= Math.max(1, Math.ceil((courseProblemTotal || 0) / courseProblemPageSize))}>Next ›</button>
+                      <button className="btn" onClick={() => setCourseProblemPage(Math.max(1, Math.ceil((courseProblemTotal || 0) / courseProblemPageSize)))} disabled={courseProblemPage >= Math.max(1, Math.ceil((courseProblemTotal || 0) / courseProblemPageSize))}>Last »</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
           {/* EXISTING PROBLEMS */}
           <section style={{ marginBottom: 40 }}>
             <h3 className="centered-h">Existing Problems</h3>
@@ -1816,11 +2053,20 @@ async function removeUser(uId) {
                 <select className="p-2 field" value={problemsPageSize} onChange={e => { setProblemsPageSize(Number(e.target.value)); setProblemsPage(1); }}>
                   {[20, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
                 </select>
+                <select className="p-2 field" value={addProblemCourseId} onChange={e => setAddProblemCourseId(e.target.value)}>
+                  <option value="">— add to course —</option>
+                  {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                </select>
               </div>
               <div style={{ color: "var(--muted-2)" }}>
                 Showing page {problemsPage} of {problemsPagesCount} — <strong>{problemsTotalCount}</strong> total
               </div>
             </div>
+            {existingProblemsNotice && (
+              <div className={`section-notice ${existingProblemsNotice.type || ''}`}>
+                {existingProblemsNotice.text}
+              </div>
+            )}
             <div className="space-y-2">
               {problemsLoading ? (
                 <div style={{ color: "var(--muted-2)", padding: 10 }}>Loading problems…</div>
@@ -1835,6 +2081,38 @@ async function removeUser(uId) {
                     <div className="problem-sub">{p.platform} • {p.difficulty}</div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      className="px-3 py-1 border rounded text-sm"
+                      onClick={async () => {
+                        if (!addProblemCourseId) {
+                          return showExistingProblemsNotice("error", "Select a course to add this problem.");
+                        }
+                        const { data: existing, error: existErr } = await supabase
+                          .from("course_problems")
+                          .select("id")
+                          .eq("course_id", addProblemCourseId)
+                          .eq("problem_id", p.id)
+                          .maybeSingle();
+                        if (existErr && existErr.code !== "PGRST116") {
+                          return showExistingProblemsNotice("error", existErr.message || "Check failed");
+                        }
+                        if (existing?.id) {
+                          return showExistingProblemsNotice("warning", "This problem already exists in the selected course.");
+                        }
+                        const { error: insErr } = await supabase
+                          .from("course_problems")
+                          .insert([{ course_id: addProblemCourseId, problem_id: p.id }]);
+                        if (insErr) {
+                          return showExistingProblemsNotice("error", insErr.message || "Add to course failed");
+                        }
+                        showExistingProblemsNotice("success", "Problem added to course.");
+                        if (addProblemCourseId === courseProblemCourseId) {
+                          fetchCourseProblemsPage({ courseId: courseProblemCourseId, page: courseProblemPage, pageSize: courseProblemPageSize, search: courseProblemSearch, difficulty: courseProblemDifficulty });
+                        }
+                      }}
+                    >
+                      Add to course
+                    </button>
                     {p.link && <a href={p.link} target="_blank" rel="noreferrer" className="px-3 py-1 border rounded text-sm">Open</a>}
                     <button
                       className="px-3 py-1 border rounded text-sm"
@@ -1881,6 +2159,38 @@ async function removeUser(uId) {
         .hover-card:hover { transform: translateY(-4px); background: rgba(0,210,255,0.06); box-shadow: 0 12px 40px rgba(0,210,255,0.08); }
 
         .card-title { text-align: center; color: white; margin-bottom: 12px; font-size: 16px; font-weight: 700; }
+        .quick-stats { display: grid; gap: 10px; text-align: left; }
+        .quick-stat { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); color: #e6f7ff; font-weight: 600; }
+        .quick-stat span { color: var(--muted-2); font-weight: 600; }
+        .quick-stat strong { color: #ffffff; font-size: 16px; }
+        .quick-stat-note { margin-top: 10px; font-size: 12px; color: #22c55e; text-align: center; display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap: wrap; }
+        .quick-stat-user { color: #e6f7ff; font-weight: 700; }
+        .quick-stat-role { padding: 2px 8px; border-radius: 999px; background: rgba(0,210,255,0.12); color: #bff6ff; border: 1px solid rgba(0,210,255,0.25); font-size: 11px; text-transform: capitalize; }
+        .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+        .multi-course-wrap { display: flex; flex-direction: column; gap: 10px; }
+        .multi-course-header { display: flex; flex-direction: column; gap: 8px; }
+        .multi-course-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .multi-course-count { color: var(--muted-2); font-size: 12px; }
+        .multi-course-list { max-height: 180px; overflow: auto; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 6px; background: rgba(255,255,255,0.02); }
+        .multi-course-list.disabled { opacity: 0.6; pointer-events: none; }
+        .multi-course-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; color: #e6f7ff; }
+        .multi-course-item:hover { background: rgba(0,210,255,0.08); }
+        .multi-course-item input { accent-color: #00d2ff; }
+        .multi-course-hint { font-size: 12px; color: var(--muted-2); }
+        .section-notice { margin: 6px 0 12px; padding: 8px 10px; border-radius: 8px; font-size: 12px; border: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.02); color: rgba(255,255,255,0.9); }
+        .section-notice.error { background: rgba(244,63,94,0.12); border-color: rgba(244,63,94,0.25); color: #fecaca; }
+        .section-notice.success { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.25); color: #bbf7d0; }
+        .section-notice.warning { background: rgba(234,179,8,0.12); border-color: rgba(234,179,8,0.25); color: #fde68a; }
+        .course-problem-toolbar { display:flex; gap:10px; align-items:center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; }
+        .course-problem-grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+        .course-problem-card { border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; background: rgba(255,255,255,0.02); padding: 10px 12px; }
+        .course-problem-card summary { list-style: none; cursor: pointer; }
+        .course-problem-card summary::-webkit-details-marker { display: none; }
+        .course-problem-summary { display:flex; align-items:center; justify-content: space-between; gap: 10px; }
+        .course-problem-title { color: #e6f7ff; font-weight: 700; }
+        .course-problem-count { color: var(--muted-2); font-size: 12px; }
+        .course-problem-list { margin-top: 10px; display:flex; flex-direction: column; gap: 8px; }
+        .course-problem-item { display:flex; align-items:center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); }
 
         /* header back button */
         .back-btn {

@@ -1356,6 +1356,23 @@ export default function Home() {
   box-shadow: 0 14px 40px rgba(0,210,255,0.12);
 }
 
+/* keep main content clear of fixed profile panel */
+.with-profile-panel {
+  padding-left: 0;
+}
+
+@media (max-width: 1280px) {
+  .with-profile-panel {
+    padding-left: 260px;
+  }
+}
+
+@media (max-width: 768px) {
+  .with-profile-panel {
+    padding-left: 0;
+  }
+}
+
 /* text color changes on hover to match button contrast */
 .profile-panel .panel-name { color: var(--text-light); font-weight:700; font-size:15px; margin-top:8px; }
 .profile-panel .panel-meta { color: var(--muted-2); font-size:13px; font-weight:600; margin-top:4px; }
@@ -1366,9 +1383,16 @@ export default function Home() {
   color: var(--bg-dark);
 }
 
-/* hide panel on small screens */
-@media (max-width: 1023px) {
-  .profile-panel { display: none; }
+/* show panel inline on very small screens */
+@media (max-width: 768px) {
+  .profile-panel {
+    position: static;
+    left: auto;
+    top: auto;
+    width: 100%;
+    max-width: 420px;
+    margin: 12px auto 0;
+  }
 }
 
 /* modal overlay */
@@ -1510,8 +1534,8 @@ input.p-2.field {
   color: rgba(255,255,255,0.45) !important;
 }
 
-/* small tweak: ensure course-stats items stay single-line and centered */
-.course-stats { white-space: nowrap; display: flex; gap: 18px; align-items: center; justify-content: center; }
+/* course stats: allow wrap on narrower cards */
+.course-stats { white-space: normal; display: flex; flex-wrap: wrap; row-gap: 6px; column-gap: 18px; align-items: center; justify-content: center; }
 
 /* -----------------------
    HOMEPAGE BLOG: layout fix
@@ -1618,7 +1642,7 @@ input.p-2.field {
 
       `}</style>
 
-      <main className="min-h-screen">
+      <main className={`min-h-screen ${user && profile ? 'with-profile-panel' : ''}`}>
         <header className="max-w-5xl mx-auto p-6 sm:p-10">
           <nav className="flex items-center justify-between" aria-label="Main navigation">
             <div className="text-lg font-semibold title" aria-hidden="true"></div>
@@ -1980,7 +2004,7 @@ input.p-2.field {
               {visibleCourses.length === 0 ? (
                 <div className="muted-2">No courses match the selected topics.</div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   {visibleCourses.map((c) => (
                     <CourseCard key={c.id} courseObj={c} isCpFallback={c.slug === 'cp-foundations'} />
                   ))}
@@ -1996,7 +2020,7 @@ input.p-2.field {
               )}
             </>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <CourseCard courseObj={{
                 id: cpCourse?.id ?? 'cp-fallback',
                 slug: cpCourse?.slug ?? 'cp-foundations',
@@ -2036,7 +2060,7 @@ input.p-2.field {
         <section id="blog-home" className="max-w-5xl mx-auto p-6 sm:p-10">
           <h2 className="text-xl font-bold mb-4 title">Read Blog Post</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {homePosts.map((p) => (
               <article key={p.id} className="hover-card p-6 text-left" style={{ minHeight: 320 }}>
                 <div style={{ height: 160, backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.45)), url(${p.thumbnail})`, backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: 8 }} role="img" aria-label={p.title} />

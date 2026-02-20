@@ -3,6 +3,8 @@ import Head from 'next/head'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient' // <-- your existing client
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 /* Utilities */
 const uid = (prefix = '') => `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
@@ -13,6 +15,7 @@ const formatNumber = (n) => {
 }
 const CATEGORIES = ['All', 'Funny', 'Educational', 'Tech', 'Religious', 'Others']
 const DHAKA_TZ = 'Asia/Dhaka'
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i
 
 function formatDateParts(ts) {
   if (!ts) return { date: '', time: '' }
@@ -45,6 +48,17 @@ function getEditedParts(createdAt, updatedAt) {
   return dt.date ? dt : null
 }
 
+function normalizeMarkdown(raw) {
+  if (!raw) return ''
+  const lines = String(raw).split(/\r?\n/)
+  const normalized = lines.map((line) => {
+    const trimmed = line.trim()
+    if (IMAGE_EXT.test(trimmed)) return `![](${trimmed})`
+    return line
+  })
+  return normalized.join('\n')
+}
+
 export default function BlogPage() {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
@@ -69,6 +83,7 @@ export default function BlogPage() {
   const [editReplyText, setEditReplyText] = useState('')
   const [shareNotice, setShareNotice] = useState('')
   const shareNoticeTimer = useRef(null)
+  const contentRef = useRef(null)
   const openFromQueryRef = useRef(false)
 
   // UI state
@@ -78,6 +93,18 @@ export default function BlogPage() {
   const [isWriteOpen, setIsWriteOpen] = useState(false)
   const [draft, setDraft] = useState({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' })
   const [loadingMore, setLoadingMore] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [drafts, setDrafts] = useState([])
+  const [selectedDraftId, setSelectedDraftId] = useState('')
+  const [draftsLoading, setDraftsLoading] = useState(false)
+  const [autoSaveNotice, setAutoSaveNotice] = useState('')
+  const draftRef = useRef(draft)
+  const draftDirtyRef = useRef(false)
+  const lastSavedRef = useRef('')
+  const savingDraftRef = useRef(false)
+  const selectedDraftIdRef = useRef('')
+  const currentUserIdRef = useRef(null)
+  const draftsLoadingRef = useRef(false)
 
   // EDIT state: holds id when editing an existing post
   const [editingPostId, setEditingPostId] = useState(null)
@@ -90,6 +117,185 @@ export default function BlogPage() {
   const [userRole, setUserRole] = useState('user')
   const [currentUserAvatar, setCurrentUserAvatar] = useState('')
   const [currentUserDisplayName, setCurrentUserDisplayName] = useState('')
+
+  const normalizedPostContent = useMemo(
+    () => normalizeMarkdown(selectedPost?.content || ''),
+    [selectedPost?.content]
+  )
+
+  useEffect(() => {
+    draftRef.current = draft
+    const fp = draftFingerprint(draft)
+    if (fp !== lastSavedRef.current) draftDirtyRef.current = true
+  }, [draft])
+
+  useEffect(() => {
+    selectedDraftIdRef.current = selectedDraftId
+  }, [selectedDraftId])
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId
+  }, [currentUserId])
+
+  useEffect(() => {
+    draftsLoadingRef.current = draftsLoading
+  }, [draftsLoading])
+
+  function draftFingerprint(d) {
+    if (!d) return ''
+    return [d.title, d.excerpt, d.content, d.category, d.tags, d.thumbnail].join('||')
+  }
+
+  async function fetchDraftsFromDb() {
+    if (!currentUserId) {
+      setDrafts([])
+      return
+    }
+    setDraftsLoading(true)
+    const { data, error } = await supabase
+      .from('blog_drafts')
+      .select('id, title, excerpt, content, category, tags, thumbnail, updated_at, created_at')
+      .eq('user_id', currentUserId)
+      .order('updated_at', { ascending: false })
+    setDraftsLoading(false)
+    if (error) {
+      console.error('failed to load drafts', error)
+      return
+    }
+    setDrafts(Array.isArray(data) ? data : [])
+  }
+
+  async function upsertDraft({ silent = false, force = false } = {}) {
+    const userId = currentUserIdRef.current
+    const d = draftRef.current || {}
+    const hasContent = (d.title || '').trim() || (d.content || '').trim()
+    if (!userId) {
+      if (!silent) alert('Please log in to save drafts.')
+      return false
+    }
+    if (!hasContent) {
+      if (!silent) alert('Add a title or content before saving a draft.')
+      return false
+    }
+    if (!force && !draftDirtyRef.current) return false
+    if (savingDraftRef.current || draftsLoadingRef.current) return false
+    savingDraftRef.current = true
+    const payload = {
+      user_id: userId,
+      title: d.title || '',
+      excerpt: d.excerpt || '',
+      content: d.content || '',
+      category: d.category || 'Educational',
+      tags: d.tags || '',
+      thumbnail: d.thumbnail || '',
+      updated_at: new Date().toISOString(),
+    }
+    try {
+      if (selectedDraftIdRef.current) {
+        const { data, error } = await supabase
+          .from('blog_drafts')
+          .update(payload)
+          .eq('id', selectedDraftIdRef.current)
+          .eq('user_id', userId)
+          .select()
+          .single()
+        if (error) {
+          if (!silent) alert('Failed to update draft.')
+          return false
+        }
+        setDrafts((prev) => {
+          const next = prev.filter((x) => x.id !== data.id)
+          return [data, ...next]
+        })
+        if (!silent) alert('Draft updated.')
+      } else {
+        const { data, error } = await supabase
+          .from('blog_drafts')
+          .insert(payload)
+          .select()
+          .single()
+        if (error) {
+          if (!silent) alert('Failed to save draft.')
+          return false
+        }
+        setDrafts((prev) => [data, ...prev])
+        setSelectedDraftId(data.id)
+        if (!silent) alert('Draft saved.')
+      }
+      lastSavedRef.current = draftFingerprint(d)
+      draftDirtyRef.current = false
+      if (silent) {
+        setAutoSaveNotice(`Auto-saved at ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`)
+        setTimeout(() => setAutoSaveNotice(''), 3000)
+      }
+      return true
+    } finally {
+      savingDraftRef.current = false
+    }
+  }
+
+  function handleSaveDraft() {
+    upsertDraft({ silent: false, force: true })
+  }
+
+  function handleLoadDraft() {
+    if (!selectedDraftId) return
+    const d = drafts.find((x) => x.id === selectedDraftId)
+    if (!d) return
+    setDraft({
+      title: d.title || '',
+      excerpt: d.excerpt || '',
+      content: d.content || '',
+      category: d.category || 'Educational',
+      tags: d.tags || '',
+      thumbnail: d.thumbnail || '',
+    })
+    lastSavedRef.current = draftFingerprint(d)
+    draftDirtyRef.current = false
+    setEditingPostId(null)
+    setShowPreview(false)
+  }
+
+  function handleDeleteDraft() {
+    if (!selectedDraftId) return
+    if (!currentUserId) return
+    ;(async () => {
+      const { error } = await supabase
+        .from('blog_drafts')
+        .delete()
+        .eq('id', selectedDraftId)
+        .eq('user_id', currentUserId)
+      if (error) return alert('Failed to delete draft.')
+      setDrafts((prev) => prev.filter((d) => d.id !== selectedDraftId))
+      setSelectedDraftId('')
+    })()
+  }
+
+  function clearSelectedDraft() {
+    if (!selectedDraftId) return
+    if (!currentUserId) return
+    supabase
+      .from('blog_drafts')
+      .delete()
+      .eq('id', selectedDraftId)
+      .eq('user_id', currentUserId)
+      .then(() => null)
+    setDrafts((prev) => prev.filter((d) => d.id !== selectedDraftId))
+    setSelectedDraftId('')
+  }
+
+  useEffect(() => {
+    if (!isWriteOpen) return
+    fetchDraftsFromDb()
+  }, [isWriteOpen, currentUserId])
+
+  useEffect(() => {
+    if (!isWriteOpen) return
+    const timer = setInterval(() => {
+      upsertDraft({ silent: true, force: false })
+    }, 60000)
+    return () => clearInterval(timer)
+  }, [isWriteOpen])
 
   async function fetchProfilesByIds(ids) {
     const list = Array.from(new Set((ids || []).filter(Boolean)))
@@ -117,6 +323,76 @@ export default function BlogPage() {
     } catch (e) {
       return new Map()
     }
+  }
+
+  function updateDraftContent(next) {
+    setDraft((d) => ({ ...d, content: next }))
+  }
+
+  function applyWrap(before, after = before) {
+    const el = contentRef.current
+    if (!el) return
+    const value = draft.content || ''
+    const start = el.selectionStart ?? value.length
+    const end = el.selectionEnd ?? value.length
+    const selected = value.slice(start, end) || 'text'
+    const next = value.slice(0, start) + before + selected + after + value.slice(end)
+    updateDraftContent(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(start + before.length, start + before.length + selected.length)
+    })
+  }
+
+  function insertLinePrefix(prefix) {
+    const el = contentRef.current
+    if (!el) return
+    const value = draft.content || ''
+    const start = el.selectionStart ?? value.length
+    const end = el.selectionEnd ?? value.length
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1
+    const next = value.slice(0, lineStart) + prefix + value.slice(lineStart)
+    updateDraftContent(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(start + prefix.length, end + prefix.length)
+    })
+  }
+
+  function insertLink() {
+    const el = contentRef.current
+    if (!el) return
+    const value = draft.content || ''
+    const start = el.selectionStart ?? value.length
+    const end = el.selectionEnd ?? value.length
+    const selected = value.slice(start, end) || 'link text'
+    const isUrl = /^https?:\/\//i.test(selected)
+    const text = isUrl ? 'link' : selected
+    const url = isUrl ? selected : 'https://'
+    const snippet = `[${text}](${url})`
+    const next = value.slice(0, start) + snippet + value.slice(end)
+    updateDraftContent(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const cursor = start + snippet.length - (isUrl ? 1 : url.length + 1)
+      el.setSelectionRange(cursor, cursor)
+    })
+  }
+
+  function insertImage() {
+    const el = contentRef.current
+    if (!el) return
+    const value = draft.content || ''
+    const start = el.selectionStart ?? value.length
+    const end = el.selectionEnd ?? value.length
+    const snippet = `![alt text](https://)`
+    const next = value.slice(0, start) + snippet + value.slice(end)
+    updateDraftContent(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const cursor = start + snippet.length - 1
+      el.setSelectionRange(cursor, cursor)
+    })
   }
 
   /* Hydrate: load auth + posts + meta from DB */
@@ -504,6 +780,7 @@ export default function BlogPage() {
         setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' })
         setIsWriteOpen(false)
         setEditingPostId(null)
+        clearSelectedDraft()
         openPost(updatedPost)
         return
       }
@@ -539,6 +816,7 @@ export default function BlogPage() {
       setPosts(prev => [newPost, ...prev])
       setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' })
       setIsWriteOpen(false)
+      clearSelectedDraft()
       openPost(newPost)
     } catch (e) {
       console.error('publishDraft unexpected', e)
@@ -1324,6 +1602,7 @@ export default function BlogPage() {
                 </div>
 
                 <div className="modal-header-actions">
+                  <button className="btn btn-outline" onClick={handleSaveDraft}>Save draft</button>
                   <button
                     className="btn btn-outline"
                     onClick={() => { setIsWriteOpen(false); setDraft({ title: '', excerpt: '', content: '', category: 'Educational', tags: '', thumbnail: '' }); setEditingPostId(null); }}
@@ -1336,6 +1615,23 @@ export default function BlogPage() {
 
               {/* Body (form) */}
               <div className="modal-body">
+                {autoSaveNotice ? <div className="autosave-note">{autoSaveNotice}</div> : null}
+                <div className="drafts-row">
+                  <label>Drafts
+                    <select value={selectedDraftId} onChange={(e) => setSelectedDraftId(e.target.value)} disabled={draftsLoading}>
+                      <option value="">Select a draft</option>
+                      {drafts.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {(d.title || 'Untitled').slice(0, 40)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="draft-actions">
+                    <button type="button" className="btn btn-outline btn-sm" onClick={handleLoadDraft} disabled={!selectedDraftId || draftsLoading}>Load</button>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={handleDeleteDraft} disabled={!selectedDraftId || draftsLoading}>Delete</button>
+                  </div>
+                </div>
                 <div className="form-grid">
                   <label>Title
                     <input value={draft.title} onChange={(e) => setDraft(d => ({ ...d, title: e.target.value }))} />
@@ -1360,13 +1656,81 @@ export default function BlogPage() {
                   </label>
 
                   <label style={{ gridColumn: '1 / -1' }}>Content
-                    <textarea value={draft.content} onChange={(e) => setDraft(d => ({ ...d, content: e.target.value }))} />
+                    <div className="md-toolbar">
+                      <button type="button" className="md-btn" onClick={() => applyWrap('**', '**')} title="Bold">B</button>
+                      <button type="button" className="md-btn" onClick={() => applyWrap('*', '*')} title="Italic">I</button>
+                      <button type="button" className="md-btn" onClick={() => insertLinePrefix('# ')} title="Heading">H</button>
+                      <button type="button" className="md-btn" onClick={() => insertLinePrefix('- ')} title="List">•</button>
+                      <button type="button" className="md-btn" onClick={insertLink} title="Link">Link</button>
+                      <button type="button" className="md-btn" onClick={insertImage} title="Image">Img</button>
+                      <button
+                        type="button"
+                        className={`md-btn ${showPreview ? 'active' : ''}`}
+                        onClick={() => setShowPreview((v) => !v)}
+                        aria-pressed={showPreview}
+                        title="Toggle preview"
+                      >
+                        Preview
+                      </button>
+                    </div>
+                    <div className={`md-split ${showPreview ? 'is-preview' : 'is-single'}`}>
+                      <textarea
+                        ref={contentRef}
+                        value={draft.content}
+                        onChange={(e) => setDraft(d => ({ ...d, content: e.target.value }))}
+                      />
+                      {showPreview && (
+                        <div className="md-preview">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              p: ({ children }) => <p className="post-paragraph">{children}</p>,
+                              a: ({ href, children }) => (
+                                <a href={href} target="_blank" rel="noreferrer">
+                                  {children}
+                                </a>
+                              ),
+                              img: ({ src, alt }) => (
+                                <figure className="post-image">
+                                  <a href={src} target="_blank" rel="noreferrer">
+                                    <img src={src} alt={alt || 'Post image'} loading="lazy" />
+                                  </a>
+                                  {alt ? <figcaption>{alt}</figcaption> : null}
+                                </figure>
+                              ),
+                              h1: ({ children }) => <h1 className="md-h1">{children}</h1>,
+                              h2: ({ children }) => <h2 className="md-h2">{children}</h2>,
+                              h3: ({ children }) => <h3 className="md-h3">{children}</h3>,
+                              ul: ({ children }) => <ul className="md-list">{children}</ul>,
+                              ol: ({ children }) => <ol className="md-list">{children}</ol>,
+                              li: ({ children }) => <li className="md-list-item">{children}</li>,
+                              blockquote: ({ children }) => <blockquote className="md-quote">{children}</blockquote>,
+                              code: ({ inline, children }) => (
+                                inline ? <code className="md-inline-code">{children}</code> :
+                                  <pre className="md-code-block"><code>{children}</code></pre>
+                              ),
+                            }}
+                          >
+                            {normalizeMarkdown(draft.content || '')}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
                   </label>
                 </div>
 
                 {/* small helper row */}
                 <div className="write-hint">
-                  <small className="muted-2">Tip: Use short excerpt and 2–4 tags. You can edit post later.</small>
+                  <small className="muted-2">
+                    Tip: Markdown is supported. Use
+                    <span className="code-inline">**bold**</span>,
+                    <span className="code-inline">*italic*</span>,
+                    <span className="code-inline"># Heading</span>,
+                    <span className="code-inline">- list</span>,
+                    <span className="code-inline">[text](https://...)</span>,
+                    <span className="code-inline">![alt](url)</span>.
+                    Paste a direct image URL on its own line to auto‑show the image.
+                  </small>
                 </div>
               </div>
             </div>
@@ -1388,9 +1752,42 @@ export default function BlogPage() {
                 {/* content wrapped in a high-contrast card for readability */}
                 <div className="post-content">
                   <article className="content-card">
-                    <div style={{ whiteSpace: 'pre-wrap' }}>
-                      {selectedPost.content || 'Full content not provided.'}
-                    </div>
+                    {normalizedPostContent ? (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          p: ({ children }) => <p className="post-paragraph">{children}</p>,
+                          a: ({ href, children }) => (
+                            <a href={href} target="_blank" rel="noreferrer">
+                              {children}
+                            </a>
+                          ),
+                          img: ({ src, alt }) => (
+                            <figure className="post-image">
+                              <a href={src} target="_blank" rel="noreferrer">
+                                <img src={src} alt={alt || 'Post image'} loading="lazy" />
+                              </a>
+                              {alt ? <figcaption>{alt}</figcaption> : null}
+                            </figure>
+                          ),
+                          h1: ({ children }) => <h1 className="md-h1">{children}</h1>,
+                          h2: ({ children }) => <h2 className="md-h2">{children}</h2>,
+                          h3: ({ children }) => <h3 className="md-h3">{children}</h3>,
+                          ul: ({ children }) => <ul className="md-list">{children}</ul>,
+                          ol: ({ children }) => <ol className="md-list">{children}</ol>,
+                          li: ({ children }) => <li className="md-list-item">{children}</li>,
+                          blockquote: ({ children }) => <blockquote className="md-quote">{children}</blockquote>,
+                          code: ({ inline, children }) => (
+                            inline ? <code className="md-inline-code">{children}</code> :
+                              <pre className="md-code-block"><code>{children}</code></pre>
+                          ),
+                        }}
+                      >
+                        {normalizedPostContent}
+                      </ReactMarkdown>
+                    ) : (
+                      <div>Full content not provided.</div>
+                    )}
                   </article>
                 </div>
 
@@ -1690,7 +2087,9 @@ export default function BlogPage() {
           position: relative;
           display: flex;
           flex-direction: column;
+          max-height: calc(100vh - 48px);
         }
+        .modal-card.write .modal-body { flex: 1; overflow: auto; }
 
         .modal-close { position:absolute; right: 20px; top: 18px; background: rgba(0,0,0,0.35); color: #e6f7ff; border: none; font-size:18px; cursor:pointer; z-index: 80; padding:6px 8px; border-radius:8px; }
         .modal-thumb { height: 220px; background-size: cover; background-position:center; position: relative; }
@@ -1734,6 +2133,22 @@ export default function BlogPage() {
         .post-view .post-body-large { max-width: 900px; width: 100%; margin: 0 auto; }
         .postview-title { margin: 0; color: #e6f7ff; font-size: 22px; }
         .post-content { color: var(--muted-2); margin-top: 12px; font-size: 15px; }
+        .post-paragraph { margin: 0 0 10px; white-space: pre-wrap; line-height: 1.6; }
+        .content-spacer { height: 8px; }
+        .post-image { margin: 12px 0; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+        .post-image img { max-width: 100%; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); }
+        .post-image figcaption { font-size: 12px; color: var(--muted-2); }
+        .post-content a { color: #7dd3fc; text-decoration: underline; text-decoration-thickness: 1px; word-break: break-word; }
+        .post-content a:hover { color: #a5f3fc; }
+        .code-inline { display: inline-block; padding: 0 6px; margin: 0 4px; border-radius: 6px; background: rgba(148,163,184,0.15); color: #e2e8f0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size: 12px; }
+        .md-h1 { font-size: 22px; margin: 6px 0 12px; color: #e6f7ff; }
+        .md-h2 { font-size: 18px; margin: 6px 0 10px; color: #e6f7ff; }
+        .md-h3 { font-size: 16px; margin: 6px 0 8px; color: #e6f7ff; }
+        .md-list { margin: 0 0 12px 18px; padding: 0; }
+        .md-list-item { margin: 4px 0; }
+        .md-quote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid rgba(0,210,255,0.4); background: rgba(0,210,255,0.06); border-radius: 8px; color: #cdefff; }
+        .md-inline-code { background: rgba(148,163,184,0.18); padding: 2px 6px; border-radius: 6px; font-size: 13px; }
+        .md-code-block { background: rgba(15,23,42,0.65); border: 1px solid rgba(255,255,255,0.08); padding: 12px; border-radius: 10px; overflow-x: auto; }
 
         /* content card — high contrast, comfortable reading (fully opaque) */
         .content-card {
@@ -1918,8 +2333,22 @@ export default function BlogPage() {
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
         .form-grid label { display:flex; flex-direction:column; gap:8px; color: var(--muted-2); }
         .form-grid input, .form-grid select, .form-grid textarea { padding:8px; border-radius:8px; border:1px solid var(--glass-border); background: rgba(255,255,255,0.02); color: var(--muted); outline:none; }
-        .form-grid textarea { border: 1px solid rgba(255,255,255,0.6); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); background: rgba(2,10,18,0.65); min-height: 180px; }
-        .form-grid textarea { min-height: 140px; grid-column: 1 / -1; }
+        .form-grid textarea { border: 1px solid rgba(255,255,255,0.6); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1); background: rgba(2,10,18,0.65); min-height: 180px; width: 100%; max-width: 100%; box-sizing: border-box; resize: vertical; }
+        .form-grid textarea { min-height: 180px; grid-column: 1 / -1; }
+        .drafts-row { display:flex; gap:12px; align-items:flex-end; margin-top: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+        .drafts-row label { display:flex; flex-direction:column; gap:6px; color: var(--muted-2); flex: 1 1 240px; }
+        .drafts-row select { padding:8px; border-radius:8px; border:1px solid var(--glass-border); background: rgba(255,255,255,0.02); color: var(--muted); outline:none; }
+        .draft-actions { display:flex; gap:8px; }
+        .md-toolbar { display:flex; gap:8px; align-items:center; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); margin: 8px 0 10px; }
+        .md-btn { background: rgba(0,210,255,0.06); color: #bfe9ff; border: 1px solid rgba(0,210,255,0.18); padding: 6px 8px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+        .md-btn:hover { background: rgba(0,210,255,0.16); color: #0b1220; box-shadow: 0 8px 22px rgba(0,210,255,0.18); }
+        .md-btn.active { background: rgba(0,210,255,0.3); color: #001018; border-color: rgba(0,210,255,0.45); }
+        .md-split { display:grid; grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
+        .md-split.is-preview { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+        .md-split textarea { grid-column: auto; }
+        .md-preview { padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.14); background: rgba(6,12,20,0.75); width: 100%; max-width: 100%; box-sizing: border-box; overflow: auto; max-height: 420px; }
+        .md-split.is-preview textarea { max-height: 420px; }
+        .autosave-note { margin: 2px 0 8px; font-size: 12px; color: #9be9ff; }
 
         .write-hint { margin-top: 12px; display:flex; justify-content:space-between; align-items:center; color: var(--muted-2); }
 
@@ -1928,7 +2357,12 @@ export default function BlogPage() {
           .posts-grid { grid-template-columns: 1fr; }
           .sidebar { position: relative; top: auto; }
           .form-grid { grid-template-columns: 1fr; }
+          .md-split.is-preview { grid-template-columns: 1fr; }
           .modal-card.write { width: calc(100% - 32px); margin: 0 16px; }
+        }
+
+        @media (max-width: 720px) {
+          .md-split.is-preview { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 640px) {
