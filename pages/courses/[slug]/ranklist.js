@@ -584,10 +584,18 @@ export default function CourseRanklist() {
           align-items:center;
           padding:12px;
           transition: background 180ms ease, transform 120ms ease;
+          border: 1px solid rgba(0,0,0,0.6);
+          border-radius: 10px;
+          background: #fff;
         }
-        .row:hover { background: rgba(0,210,255,0.04); transform: translateY(-4px); box-shadow: 0 14px 40px rgba(0,210,255,0.04); color: #fff; }
+        .row:hover {
+          background: rgba(0,210,255,0.04);
+          transform: translateY(-4px);
+          box-shadow: 0 14px 40px rgba(0,0,0,0.15);
+          color: #000;
+        }
 
-        .row + .row { border-top: 1px solid rgba(255,255,255,0.02); }
+        .row + .row { border-top: none; }
 
         .rank-num {
           display: inline-flex;

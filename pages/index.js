@@ -184,6 +184,13 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(true);
+  const [profileStats, setProfileStats] = useState({
+    totalCourses: 0,
+    totalSolved: 0,
+    globalRank: null,
+    globalTotalUsers: 0,
+  });
+  const [profileStatsLoading, setProfileStatsLoading] = useState(false);
 
   // avatar upload & preview
   const [avatarPreview, setAvatarPreview] = useState("");
@@ -238,6 +245,8 @@ export default function Home() {
 
   // derive operator capability: admins and moderators (and super_admin) should see admin UI
   const isOperator = !!(profile && (["super_admin","admin","moderator"].includes((profile.role || "").toLowerCase()) || !!profile.is_admin));
+  const roleLabel = (profile?.role || "user").toLowerCase();
+  const roleClass = roleLabel.replace(/[^a-z0-9_]/g, "");
 
   // load session + profile
   useEffect(() => {
@@ -314,6 +323,152 @@ export default function Home() {
     })();
     return () => { mounted = false };
   }, []);
+
+  // load profile stats (total courses, solved, global rank)
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) {
+      setProfileStats({ totalCourses: 0, totalSolved: 0, globalRank: null, globalTotalUsers: 0 });
+      return () => { active = false; };
+    }
+    (async () => {
+      setProfileStatsLoading(true);
+      try {
+        const [{ count: totalCoursesRaw }, { count: totalSolvedRaw }] = await Promise.all([
+          supabase
+            .from("enrollments")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id),
+          supabase
+            .from("solves")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id),
+        ]);
+
+        const localCourseSet = loadLocalEnrolledIds(user.id);
+        const localCourseCount = localCourseSet ? localCourseSet.size : 0;
+        const totalCourses = Math.max(
+          Number.isFinite(totalCoursesRaw) ? totalCoursesRaw : 0,
+          localCourseCount
+        );
+
+        let totalSolved = Number(totalSolvedRaw);
+        if (!Number.isFinite(totalSolved)) {
+          const { data: solvedRows, error: solvedErr } = await supabase
+            .from("solves")
+            .select("id")
+            .eq("user_id", user.id);
+          if (!solvedErr && Array.isArray(solvedRows)) {
+            totalSolved = solvedRows.length;
+          } else {
+            totalSolved = 0;
+          }
+        }
+
+        let globalRank = null;
+        let globalTotalUsers = 0;
+
+        // Prefer course_user_stats (has first_solved_at per course). Tie-break: earliest first solve.
+        let usedStats = false;
+        try {
+          const { data: statsRows, error: statsErr } = await supabase
+            .from("course_user_stats")
+            .select("user_id, total_solves, first_solved_at");
+
+          if (!statsErr && Array.isArray(statsRows) && statsRows.length > 0) {
+            usedStats = true;
+            const map = new Map();
+            for (const row of statsRows) {
+              if (!row?.user_id) continue;
+              const prev = map.get(row.user_id) || { id: row.user_id, total: 0, firstSolvedAt: null };
+              prev.total += Number(row.total_solves || 0);
+              const ts = row.first_solved_at ? new Date(row.first_solved_at).getTime() : null;
+              if (ts && (!prev.firstSolvedAt || ts < new Date(prev.firstSolvedAt).getTime())) {
+                prev.firstSolvedAt = row.first_solved_at;
+              }
+              map.set(row.user_id, prev);
+            }
+            const list = Array.from(map.values()).sort((a, b) => {
+              if ((b.total || 0) !== (a.total || 0)) return (b.total || 0) - (a.total || 0);
+              const at = a.firstSolvedAt ? new Date(a.firstSolvedAt).getTime() : Number.MAX_SAFE_INTEGER;
+              const bt = b.firstSolvedAt ? new Date(b.firstSolvedAt).getTime() : Number.MAX_SAFE_INTEGER;
+              return at - bt;
+            });
+            globalTotalUsers = list.length;
+            const idx = list.findIndex((x) => x.id === user.id);
+            if (idx >= 0) globalRank = idx + 1;
+          }
+        } catch {}
+
+        // Fallback to solves table (tie-break: earliest solved_at)
+        if (!usedStats) {
+          const { data: allSolves, error: allSolvesErr } = await supabase
+            .from("solves")
+            .select("user_id, solved_at");
+
+          if (!allSolvesErr && Array.isArray(allSolves) && allSolves.length > 0) {
+            const map = new Map();
+            for (const row of allSolves) {
+              if (!row?.user_id) continue;
+              const prev = map.get(row.user_id) || { id: row.user_id, total: 0, firstSolvedAt: null };
+              prev.total += 1;
+              const ts = row.solved_at ? new Date(row.solved_at).getTime() : null;
+              if (ts && (!prev.firstSolvedAt || ts < new Date(prev.firstSolvedAt).getTime())) {
+                prev.firstSolvedAt = row.solved_at;
+              }
+              map.set(row.user_id, prev);
+            }
+            const list = Array.from(map.values()).sort((a, b) => {
+              if ((b.total || 0) !== (a.total || 0)) return (b.total || 0) - (a.total || 0);
+              const at = a.firstSolvedAt ? new Date(a.firstSolvedAt).getTime() : Number.MAX_SAFE_INTEGER;
+              const bt = b.firstSolvedAt ? new Date(b.firstSolvedAt).getTime() : Number.MAX_SAFE_INTEGER;
+              return at - bt;
+            });
+            globalTotalUsers = list.length;
+            const idx = list.findIndex((x) => x.id === user.id);
+            if (idx >= 0) globalRank = idx + 1;
+          }
+        }
+
+        // fallback for total solved from course_user_stats if solves are empty
+        if (!totalSolved || totalSolved === 0) {
+          try {
+            const { data: statsMine, error: statsMineErr } = await supabase
+              .from("course_user_stats")
+              .select("total_solves")
+              .eq("user_id", user.id);
+            if (!statsMineErr && Array.isArray(statsMine) && statsMine.length > 0) {
+              const sum = statsMine.reduce((acc, r) => acc + Number(r.total_solves || 0), 0);
+              if (sum > 0) totalSolved = sum;
+            }
+          } catch {}
+        }
+
+        if (active) {
+          setProfileStats({
+            totalCourses: Number.isFinite(totalCourses) ? totalCourses : 0,
+            totalSolved: Number.isFinite(totalSolved) ? totalSolved : 0,
+            globalRank,
+            globalTotalUsers,
+          });
+        }
+      } catch (err) {
+        console.warn("profile stats load failed", err);
+        if (active) {
+          setProfileStats({
+            totalCourses: 0,
+            totalSolved: 0,
+            globalRank: null,
+            globalTotalUsers: 0,
+          });
+        }
+      } finally {
+        if (active) setProfileStatsLoading(false);
+      }
+    })();
+
+    return () => { active = false; };
+  }, [user?.id]);
 
   // lock body scroll when mobile menu is open
   useEffect(() => {
@@ -1172,6 +1327,12 @@ export default function Home() {
           border-radius: 8px;
           letter-spacing: 0.5px;
         }
+        .btn-xs {
+          padding: 0.35rem 0.7rem;
+          font-size: 0.82rem;
+          border-radius: 7px;
+          letter-spacing: 0.4px;
+        }
         .btn-cyan {
           background: rgba(0, 210, 255, 0.06);
           border-color: rgba(0,210,255,0.18);
@@ -1338,11 +1499,12 @@ export default function Home() {
   left: 18px;
   top: 96px;            /* nudged upward to align closer with header avatar */
   width: 220px;
-  padding: 12px;
-  border-radius: 12px;
-  background: rgba(255,255,255,0.02);
-  border: 1px solid rgba(255,255,255,0.04);
-  box-shadow: 0 10px 30px rgba(2,6,23,0.6);
+  padding: 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(14,26,52,0.92), rgba(10,20,42,0.92));
+  border: 1px solid rgba(60,140,255,0.18);
+  box-shadow: 0 16px 40px rgba(2,6,23,0.55), inset 0 1px 0 rgba(255,255,255,0.05);
+  backdrop-filter: blur(12px);
   z-index: 50;
   transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease;
   cursor: default;
@@ -1350,10 +1512,10 @@ export default function Home() {
 
 /* hover highlight (mimic btn-cyan hover) */
 .profile-panel:hover {
-  background: var(--card-hover-bg);
-  border-color: var(--accent-cyan);
+  background: linear-gradient(180deg, rgba(18,34,70,0.96), rgba(10,20,42,0.96));
+  border-color: rgba(0,210,255,0.45);
   transform: translateY(-4px) scale(1.01);
-  box-shadow: 0 14px 40px rgba(0,210,255,0.12);
+  box-shadow: 0 18px 46px rgba(0,210,255,0.16), inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
 /* keep main content clear of fixed profile panel */
@@ -1374,12 +1536,194 @@ export default function Home() {
 }
 
 /* text color changes on hover to match button contrast */
-.profile-panel .panel-name { color: var(--text-light); font-weight:700; font-size:15px; margin-top:8px; }
-.profile-panel .panel-meta { color: var(--muted-2); font-size:13px; font-weight:600; margin-top:4px; }
+.profile-panel .panel-name { color: var(--text-light); font-weight:700; font-size:16px; margin-top:10px; letter-spacing: 0.2px; }
+.profile-panel .panel-meta { color: var(--muted-2); font-size:12.5px; font-weight:600; margin-top:4px; }
+
+.profile-panel .panel-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.profile-panel .panel-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.profile-panel .panel-stat-label {
+  font-size: 11px;
+  color: var(--muted-2);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-panel .panel-stat-value {
+  font-size: 12px;
+  color: var(--text-light);
+  font-weight: 700;
+}
+
+.profile-panel .panel-avatar {
+  position: relative;
+  border-radius: 14px;
+  padding: 2px;
+  background: conic-gradient(from 120deg, rgba(0,210,255,0.7), rgba(56,189,248,0.25), rgba(251,191,36,0.4), rgba(0,210,255,0.7));
+  box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+}
+
+.profile-panel .panel-avatar img {
+  border-radius: 12px;
+}
+
+.profile-panel .panel-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+}
+
+.profile-panel .panel-stat-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.18);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: #fbbf24;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+}
+
+.profile-panel .badge-course {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.55);
+  color: #60a5fa;
+}
+
+.profile-panel .badge-solved {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #34d399;
+}
+
+.profile-panel .badge-users {
+  background: rgba(148, 163, 184, 0.18);
+  border-color: rgba(148, 163, 184, 0.55);
+  color: #cbd5f5;
+}
+
+.profile-panel .panel-stat-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+}
+
+.profile-panel .stat-course {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #60a5fa;
+}
+
+.profile-panel .stat-solved {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #34d399;
+}
+
+.profile-panel .stat-rank {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+}
+
+.profile-panel .stat-users {
+  background: rgba(148, 163, 184, 0.18);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #cbd5f5;
+}
+
+.profile-panel .panel-role {
+  display: flex;
+  justify-content: center;
+}
+
+.profile-panel .panel-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: capitalize;
+  border: 1px solid transparent;
+}
+
+.role-super_admin {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fbbf24;
+}
+
+.role-admin {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #60a5fa;
+}
+
+.role-moderator {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #34d399;
+}
+
+.role-user {
+  background: rgba(148, 163, 184, 0.18);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #cbd5f5;
+}
 
 /* when hovered, make meta/dark text for contrast */
 .profile-panel:hover .panel-name,
-.profile-panel:hover .panel-meta {
+.profile-panel:hover .panel-meta,
+.profile-panel:hover .panel-stat-label,
+.profile-panel:hover .panel-stat-value {
   color: var(--bg-dark);
 }
 
@@ -1773,9 +2117,9 @@ input.p-2.field {
 
         {/* LEFT PROFILE PANEL (desktop) */}
         {user && profile && (
-          <aside className="profile-panel" title="Profile - click Update profile">
+          <aside className="profile-panel">
             <div style={{ textAlign: 'center', marginBottom: 10 }}>
-              <div style={{ width: 84, height: 84, margin: "0 auto", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,0.02)" }}>
+              <div className="panel-avatar" style={{ width: 84, height: 84, margin: "0 auto", borderRadius: 12, overflow: "hidden" }}>
                 {avatarPreview || profile.avatar_url ? (
                   <img src={avatarPreview || profile.avatar_url} alt="avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
@@ -1788,18 +2132,70 @@ input.p-2.field {
               <div className="panel-name">{profile.display_name || profile.username || "User"}</div>
               <div className="panel-meta">{profile.institution || "No institution"}</div>
               <div className="panel-meta">{profile.country || "No country"}</div>
-              <div className="panel-meta" style={{ marginTop: 8 }}>{(profile.role || "user").toLowerCase()}</div>
+              <div className="panel-role" style={{ marginTop: 8 }}>
+                <span className={`role-badge role-${roleClass}`}>{roleLabel}</span>
+              </div>
             </div>
 
-            <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
-              <button className="btn btn-cyan btn-sm" onClick={openProfileModal}>
+            <div className="panel-stats">
+              <div className="panel-stat">
+                <span className="panel-stat-label">
+                  <span className="panel-stat-icon stat-course" aria-hidden="true">&#127891;</span>
+                  Total Courses Assigned
+                </span>
+                <span className="panel-stat-badge badge-course">
+                  {profileStatsLoading ? "..." : profileStats.totalCourses}
+                </span>
+              </div>
+              <div className="panel-stat">
+                <span className="panel-stat-label">
+                  <span className="panel-stat-icon stat-solved" aria-hidden="true">&#9989;</span>
+                  Total Problems Solved
+                </span>
+                <span className="panel-stat-badge badge-solved">
+                  {profileStatsLoading ? "..." : profileStats.totalSolved}
+                </span>
+              </div>
+              <div className="panel-stat">
+                <span className="panel-stat-label">
+                  <span className="panel-stat-icon stat-rank" aria-hidden="true">&#127942;</span>
+                  Global rank:
+                </span>
+                <span className="panel-stat-rank-badge">
+                  {profileStatsLoading
+                    ? "..."
+                    : profileStats.globalRank
+                      ? `${profileStats.globalRank}`
+                      : "Unranked"}
+                </span>
+              </div>
+              <div className="panel-stat">
+                <span className="panel-stat-label">
+                  <span className="panel-stat-icon stat-users" aria-hidden="true">&#128101;</span>
+                  Total user:
+                </span>
+                <span className="panel-stat-badge badge-users">
+                  {profileStatsLoading ? "..." : (profileStats.globalTotalUsers || 0)}
+                </span>
+              </div>
+            </div>
+
+            <div className="panel-actions">
+              <a href="/global-ranklist" className="btn btn-cyan btn-xs" title="Click to view full Ranklist">
+                Full Ranklist
+              </a>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 8 }}>
+              <button
+                className="btn btn-cyan btn-xs"
+                onClick={openProfileModal}
+                title="Click Update profile to edit Institution, Country and upload a new profile picture."
+              >
                 Update profile
               </button>
             </div>
 
-            <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted-2)" }}>
-              Click <strong>Update profile</strong> to edit Institution, Country and upload a new profile picture.
-            </div>
           </aside>
         )}
 
@@ -1833,7 +2229,7 @@ input.p-2.field {
                 </div>
 
                 <div style={{ marginBottom: 10 }}>
-                  <label style={{ display: "block", fontSize: 13, color: "var(--muted-2)" }}>Avatar</label>
+                  <label style={{ display: "block", fontSize: 13, color: "var(--muted-2)" }}>Profile Picture</label>
                   <input type="file" accept="image/*" onChange={handleAvatarFile} />
                   <div style={{ marginTop: 6, fontSize: 12, color: "var(--muted-2)" }}>{uploadingAvatar ? "Uploading..." : ""}</div>
                 </div>

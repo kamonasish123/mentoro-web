@@ -26,9 +26,13 @@ export default function EnrollPage() {
   const [localUserId, setLocalUserId] = useState(null);
   const [solvedCounts, setSolvedCounts] = useState({}); // { [problem_id]: number }
   const [attemptCounts, setAttemptCounts] = useState({}); // { [problem_id]: number }
+  const [voteCounts, setVoteCounts] = useState({}); // { [problem_id]: { like:number, dislike:number } }
+  const [myVotes, setMyVotes] = useState({}); // { [problem_id]: 'like'|'dislike' }
+  const [voteBusy, setVoteBusy] = useState({}); // { [problem_id]: boolean }
 
   // NEW: difficulty filter state ('all'|'easy'|'medium'|'hard')
   const [difficultyFilter, setDifficultyFilter] = useState("all");
+  const [hideSolved, setHideSolved] = useState(false);
 
   // modal state for "Mark solved"
   const [markModal, setMarkModal] = useState({ open: false, problem: null });
@@ -73,6 +77,49 @@ export default function EnrollPage() {
     if (prof?.username && prof.username.trim()) return prof.username;
     const idSource = userId || (prof && prof.id) || '';
     return `User ${String(idSource).slice(0, 6)}`;
+  }
+
+  async function fetchProblemVotes(problemIds, userId) {
+    if (!Array.isArray(problemIds) || problemIds.length === 0) {
+      setVoteCounts({});
+      setMyVotes({});
+      return;
+    }
+    const baseCounts = {};
+    problemIds.forEach((pid) => {
+      baseCounts[pid] = { like: 0, dislike: 0 };
+    });
+
+    try {
+      const { data, error } = await supabase
+        .from("problem_votes")
+        .select("problem_id, user_id, vote")
+        .in("problem_id", problemIds);
+
+      if (error) {
+        console.warn("problem_votes fetch error", error);
+        setVoteCounts(baseCounts);
+        setMyVotes({});
+        return;
+      }
+
+      const counts = { ...baseCounts };
+      const mine = {};
+      (data || []).forEach((row) => {
+        if (!row?.problem_id || !row?.vote) return;
+        if (!counts[row.problem_id]) counts[row.problem_id] = { like: 0, dislike: 0 };
+        if (row.vote === "like") counts[row.problem_id].like += 1;
+        if (row.vote === "dislike") counts[row.problem_id].dislike += 1;
+        if (userId && row.user_id === userId) mine[row.problem_id] = row.vote;
+      });
+
+      setVoteCounts(counts);
+      setMyVotes(mine);
+    } catch (err) {
+      console.warn("problem_votes fetch error", err);
+      setVoteCounts(baseCounts);
+      setMyVotes({});
+    }
   }
 
   // helper: persist unlocked IDs to localStorage per current user
@@ -720,6 +767,12 @@ export default function EnrollPage() {
     setUnlockAtMap(nextUnlockAt);
   }, [localUserId, sessionUser, problems]);
 
+  // load like/dislike counts and current user's vote
+  useEffect(() => {
+    const ids = (problems || []).map((p) => p?.id).filter(Boolean);
+    fetchProblemVotes(ids, sessionUser?.id || null);
+  }, [problems, sessionUser?.id]);
+
   // sync client clock with server time (reduce client clock drift)
   useEffect(() => {
     let active = true;
@@ -1109,6 +1162,51 @@ export default function EnrollPage() {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  async function handleVote(problemId, vote) {
+    if (!problemId || (vote !== "like" && vote !== "dislike")) return;
+    if (!sessionUser) {
+      alert("Please log in to vote.");
+      return;
+    }
+    if (myVotes[problemId]) {
+      alert("You already voted on this problem.");
+      return;
+    }
+    setVoteBusy((s) => ({ ...s, [problemId]: true }));
+    try {
+      const payload = {
+        problem_id: problemId,
+        user_id: sessionUser.id,
+        vote,
+      };
+      const { error } = await supabase.from("problem_votes").insert([payload]);
+      if (error) {
+        if (String(error.code) === "23505") {
+          alert("You already voted on this problem.");
+          setMyVotes((m) => ({ ...m, [problemId]: vote }));
+        } else {
+          console.warn("vote insert error", error);
+          alert("Unable to submit vote right now.");
+        }
+      } else {
+        setMyVotes((m) => ({ ...m, [problemId]: vote }));
+        setVoteCounts((c) => {
+          const curr = c[problemId] || { like: 0, dislike: 0 };
+          const next = {
+            like: curr.like + (vote === "like" ? 1 : 0),
+            dislike: curr.dislike + (vote === "dislike" ? 1 : 0),
+          };
+          return { ...c, [problemId]: next };
+        });
+      }
+    } catch (err) {
+      console.warn("vote insert error", err);
+      alert("Unable to submit vote right now.");
+    } finally {
+      setVoteBusy((s) => ({ ...s, [problemId]: false }));
+    }
+  }
+
   // text button handler: open link if text is url, otherwise toggle showing text
   function handleTextButtonClick() {
     const text = solutionModal.text;
@@ -1151,10 +1249,15 @@ export default function EnrollPage() {
   // apply difficulty filter when rendering
   const filteredProblems = problems.filter((p) => {
     if (!p) return false;
+    if (hideSolved && status[p?.id] === "solved") return false;
     const d = (p.difficulty || "").toLowerCase();
     if (difficultyFilter === "all") return true;
     return d === difficultyFilter;
   });
+
+  const totalProblemCount = problems.length;
+  const solvedProblemCount = problems.reduce((acc, p) => (status[p?.id] === "solved" ? acc + 1 : acc), 0);
+  const remainingProblemCount = Math.max(0, totalProblemCount - solvedProblemCount);
 
   return (
     <>
@@ -1178,6 +1281,24 @@ export default function EnrollPage() {
                 ) : (
                   <button onClick={handleEnroll} className="btn btn-cyan">Enroll</button>
                 )}
+              </div>
+            </div>
+
+            {/* User progress summary */}
+            <div className="mb-4 flex justify-center">
+              <div className="w-full max-w-md grid grid-cols-3 gap-3 text-sm">
+                <div className="rounded-lg bg-white/70 border border-slate-200 px-3 py-2 text-center">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
+                  <div className="text-base font-semibold text-slate-900">{totalProblemCount}</div>
+                </div>
+                <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2 text-center">
+                  <div className="text-[11px] uppercase tracking-wide text-emerald-700">Solved</div>
+                  <div className="text-base font-semibold text-emerald-700">{solvedProblemCount}</div>
+                </div>
+                <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-center">
+                  <div className="text-[11px] uppercase tracking-wide text-amber-700">Remaining</div>
+                  <div className="text-base font-semibold text-amber-700">{remainingProblemCount}</div>
+                </div>
               </div>
             </div>
 
@@ -1229,6 +1350,15 @@ export default function EnrollPage() {
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
                 </select>
+                <label className="ml-3 inline-flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={hideSolved}
+                    onChange={(e) => setHideSolved(e.target.checked)}
+                  />
+                  Hide solved
+                </label>
                 <div className="text-sm text-slate-500 ml-3">Showing <strong>{filteredProblems.length}</strong> of <strong>{problems.length}</strong></div>
               </div>
             </div>
@@ -1239,7 +1369,7 @@ export default function EnrollPage() {
               ) : (
                 <>
                   {/* Header row */}
-                  <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-center bg-transparent p-2 px-4">
+                  <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-transparent p-2 px-4">
                     <div className="md:col-span-2">
                       <div className="text-sm text-slate-500 font-medium">Problem</div>
                     </div>
@@ -1258,15 +1388,31 @@ export default function EnrollPage() {
 
                     <div className="text-sm text-slate-500 font-semibold">Status</div>
 
+                    <div className="text-sm text-slate-500 text-center font-semibold">Like / Dislike</div>
+
                     <div className="text-sm text-slate-500 text-right font-semibold">Solution</div>
                   </div>
 
                   {/* Problems */}
-                  {filteredProblems.map((p) => (
-                    <div
-                      key={p.id}
-                      className="grid grid-cols-1 md:grid-cols-6 gap-4 items-center bg-slate-50 rounded-xl p-4"
-                    >
+                  {filteredProblems.map((p) => {
+                    const counts = voteCounts[p.id] || { like: 0, dislike: 0 };
+                    const voted = myVotes[p.id];
+                    const disabledVote = !sessionUser || !!voted || !!voteBusy[p.id];
+                    const likeTitle = !sessionUser
+                      ? "Log in to like."
+                      : voted
+                        ? "You already voted."
+                        : "Like";
+                    const dislikeTitle = !sessionUser
+                      ? "Log in to dislike."
+                      : voted
+                        ? "You already voted."
+                        : "Dislike";
+                    return (
+                      <div
+                        key={p.id}
+                        className="group grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-slate-50 rounded-xl p-4"
+                      >
                       <div className="md:col-span-2">
                         <div className="font-semibold">{p.title}</div>
                         <div className="text-sm text-slate-500">{p.platform}</div>
@@ -1289,12 +1435,17 @@ export default function EnrollPage() {
                         {status[p.id] === "solved" ? (
                           <span className="text-emerald-600 font-medium">Solved ✓</span>
                         ) : status[p.id] === "attempted" ? (
-                          <button
-                            onClick={() => handleMarkSolvedClick(p)}
-                            className="inline-block px-4 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-medium hover:opacity-90 transition"
-                          >
-                            Attempted
-                          </button>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute -top-2 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-slate-200 bg-slate-900/90 px-2 py-1 text-[11px] font-medium text-white shadow-sm group-hover:block">
+                              Click here to mark as solved.
+                            </span>
+                            <button
+                              onClick={() => handleMarkSolvedClick(p)}
+                              className="inline-block px-4 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-medium hover:opacity-90 transition"
+                            >
+                              Attempted
+                            </button>
+                          </div>
                         ) : (
                           <button
                             onClick={() => handleAttempt(p)}
@@ -1303,6 +1454,37 @@ export default function EnrollPage() {
                             Attempt
                           </button>
                         )}
+                      </div>
+
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          title={likeTitle}
+                          onClick={() => handleVote(p.id, "like")}
+                          disabled={disabledVote}
+                          className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                            voted === "like"
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          } ${disabledVote ? "cursor-not-allowed opacity-60" : ""}`}
+                        >
+                          <span aria-hidden="true">&#128077;</span>
+                          <span>{counts.like}</span>
+                        </button>
+                        <button
+                          type="button"
+                          title={dislikeTitle}
+                          onClick={() => handleVote(p.id, "dislike")}
+                          disabled={disabledVote}
+                          className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                            voted === "dislike"
+                              ? "border-rose-500 bg-rose-50 text-rose-700"
+                              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          } ${disabledVote ? "cursor-not-allowed opacity-60" : ""}`}
+                        >
+                          <span aria-hidden="true">&#128078;</span>
+                          <span>{counts.dislike}</span>
+                        </button>
                       </div>
 
                       <div className="flex justify-end">
@@ -1325,7 +1507,8 @@ export default function EnrollPage() {
                         )}
                       </div>
                     </div>
-                  ))}
+                  );
+                })}
                 </>
               )}
             </div>
