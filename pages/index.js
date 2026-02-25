@@ -10,6 +10,26 @@ const fallbackProjects = [
   { id: 'ahmed-classroom', title: "Ahmed's Classroom App", desc: 'Performance optimizations - reduced load times', tags: ['Flutter'] },
 ]
 
+const DHAKA_TZ = 'Asia/Dhaka'
+function formatHomeDateParts(ts) {
+  if (!ts) return { date: '', time: '' }
+  const d = ts instanceof Date ? ts : new Date(ts)
+  if (Number.isNaN(d.getTime())) return { date: '', time: '' }
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: DHAKA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: DHAKA_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
+  return { date, time }
+}
+
 // Edit these values. Leave empty string '' when a link is not available.
 const contacts = {
   email: 'rkamonasish@gmail.com',
@@ -323,6 +343,7 @@ export default function Home() {
     })();
     return () => { mounted = false };
   }, []);
+
 
   // load profile stats (total courses, solved, global rank)
   useEffect(() => {
@@ -1105,24 +1126,24 @@ export default function Home() {
     };
 
     return (
-      <div className="hover-card p-6 text-left" style={{ minHeight: 300 }}>
-        <div className="flex items-start justify-between">
-          <div style={{ flex: 1 }}>
-            <h3 className="font-semibold title text-lg">{courseObj.title}</h3>
-            <p className="muted-2 text-sm mt-1">{courseObj.description || ''}</p>
+      <div className="hover-card course-card text-left">
+        <div className="course-header">
+          <div className="course-text">
+            <h3 className="course-title">{courseObj.title}</h3>
+            <p className="course-desc">{courseObj.description || ''}</p>
           </div>
 
           {/* Course type badge in top-right */}
           {courseType ? (
-            <div style={{ marginLeft: 12 }}>
-              <span className="course-type-badge">{String(courseType)}</span>
+            <div className="course-badge-wrap">
+              <span className={`course-type-badge course-type-${String(courseType).toLowerCase()}`}>{String(courseType)}</span>
             </div>
           ) : null}
         </div>
 
         {/* Topics mention as tags */}
-        <div className="mt-3">
-          <div className="text-sm muted-2 mb-2 font-semibold">Course topics:</div>
+        <div className="course-topics">
+          <div className="course-topics-label">Course topics</div>
           {finalTopics.length ? (
             <div className="muted-2 text-sm course-topics-inline">
               {finalTopics.map((t, i) => (
@@ -1142,14 +1163,14 @@ export default function Home() {
         </div>
 
         {/* NEW: counts on single centered row */}
-        <div style={{ marginTop: 18 }}>
-          <div className="course-stats muted-2" style={{ textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 18, alignItems: 'center' }}>
+        <div className="course-footer">
+          <div className="course-stats">
             <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>&#128101; {typeof displayEnrolledCount === 'number' ? displayEnrolledCount : '-'} enrolled</span>
             <span style={{ fontWeight: 700, color: 'var(--muted-2)' }}>&#128218; {typeof problemCount === 'number' ? problemCount : '-'} problems</span>
           </div>
 
           {/* center the action button below counts */}
-          <div style={{ marginTop: 14, textAlign: 'center' }}>
+          <div className="course-action">
             {isCpFallback ? (
               loadingCpCourse ? (
                 <button className="btn btn-cyan" disabled>Loading...</button>
@@ -1379,6 +1400,95 @@ export default function Home() {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.featured-projects .project-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+@media (min-width: 640px) {
+  .featured-projects .project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .featured-projects .project-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.project-card {
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  padding: 0;
+  border-radius: 18px;
+  background:
+    radial-gradient(1200px 240px at 15% -20%, rgba(0, 210, 255, 0.18), transparent 55%),
+    linear-gradient(140deg, rgba(12, 18, 38, 0.95), rgba(6, 9, 22, 0.98));
+  border: 1px solid rgba(0, 210, 255, 0.14);
+  box-shadow: 0 20px 50px rgba(2, 6, 23, 0.55);
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+.project-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(0, 210, 255, 0.2), transparent 55%);
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+.project-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(0, 210, 255, 0.35);
+  box-shadow: 0 28px 60px rgba(0, 210, 255, 0.15);
+}
+.project-card:hover::after { opacity: 1; }
+.project-thumb {
+  height: 180px;
+  width: 100%;
+  border-radius: 18px 18px 12px 12px;
+  overflow: hidden;
+  margin: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(140deg, rgba(148, 163, 184, 0.35), rgba(15, 23, 42, 0.5));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.project-content {
+  padding: 18px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.project-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-light);
+  text-align: center;
+}
+.project-desc {
+  color: rgba(226, 232, 240, 0.7);
+}
+.project-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+}
+.project-tag {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 210, 255, 0.2);
+  background: rgba(0, 210, 255, 0.08);
+  color: rgba(226, 232, 240, 0.9);
+}
+.project-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  align-items: center;
+  width: 100%;
+}
 .hero-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1387,6 +1497,114 @@ export default function Home() {
   justify-items: center;
 }
 .hero-stats-grid > div { width: 100%; }
+.hero-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    radial-gradient(1200px 300px at 10% -10%, rgba(0, 210, 255, 0.12), transparent 60%),
+    linear-gradient(135deg, rgba(13, 18, 40, 0.96), rgba(9, 13, 28, 0.98));
+  border: 1px solid rgba(0, 210, 255, 0.16);
+  box-shadow:
+    0 24px 60px rgba(3, 8, 20, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.hero-card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 18px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(0, 210, 255, 0.35), rgba(138, 73, 255, 0.12), transparent 60%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.hero-main {
+  position: relative;
+  z-index: 1;
+}
+.hero-photo {
+  width: 220px;
+  height: 260px;
+  border-radius: 22px;
+  padding: 10px;
+  background: linear-gradient(160deg, rgba(0, 210, 255, 0.2), rgba(255, 255, 255, 0.04));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+.hero-photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+.hero-text { max-width: 620px; }
+.hero-eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 0.35rem;
+}
+.hero-title {
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+.hero-name {
+  background: linear-gradient(90deg, #7ef9ff 0%, #e0f7ff 35%, #ffffff 70%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero-roles {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.hero-roles span {
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  background: rgba(0, 210, 255, 0.08);
+  border: 1px solid rgba(0, 210, 255, 0.18);
+  color: rgba(255, 255, 255, 0.85);
+}
+.hero-cta {
+  padding: 0.6rem 1.2rem;
+  border-radius: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.hero-stats {
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.hero-stats > div {
+  padding: 0.6rem 0.8rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+@media (max-width: 900px) {
+  .hero-photo { width: 200px; height: 235px; }
+}
+@media (max-width: 768px) {
+  .hero-card { padding: 1.6rem; }
+  .hero-text { text-align: center; }
+  .hero-main { align-items: center; }
+  .hero-roles { justify-content: center; }
+  .hero-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
         .btn:hover,
         .btn:focus {
           background: rgba(0, 210, 255, 0.10);
@@ -1413,37 +1631,78 @@ export default function Home() {
           border: 1px solid rgba(255,255,255,0.04);
           border-radius: 12px;
         }
-        .contact-card {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 0.75rem;
-          border-radius: 12px;
-          background: var(--card-bg);
-          border: 1px solid var(--card-border);
-          color: var(--muted);
-          text-decoration: none;
-          transition:
-            transform 220ms cubic-bezier(.2,.9,.2,1),
-            box-shadow 220ms ease,
-            background-color 220ms ease,
-            color 220ms ease;
-          will-change: transform, box-shadow, background-color;
-        }
-        .contact-card:hover,
-        .contact-card:focus {
-          transform: translateY(-4px) scale(1.02);
-          box-shadow: 0 14px 40px rgba(0, 210, 255, 0.12);
-          background: var(--card-hover-bg);
-          border-color: var(--accent-cyan);
-          color: var(--bg-dark);
-          outline: none;
-        }
-        .contact-card svg { color: var(--muted); transition: color 220ms ease, transform 220ms ease; }
-        .contact-card:hover svg,
-        .contact-card:focus svg { color: var(--bg-dark); transform: scale(1.08); }
-        .contact-title { font-weight: 600; color: inherit; }
-        .contact-sub { font-size: 0.75rem; color: var(--muted-2); transition: color 220ms ease; }
+.contact-section .contact-wrap {
+  padding: 22px;
+  border-radius: 18px;
+  background:
+    radial-gradient(1200px 240px at 20% -30%, rgba(0, 210, 255, 0.12), transparent 55%),
+    linear-gradient(140deg, rgba(12, 18, 38, 0.95), rgba(7, 10, 24, 0.98));
+  border: 1px solid rgba(0, 210, 255, 0.14);
+  box-shadow: 0 20px 52px rgba(2, 6, 23, 0.55);
+}
+.contact-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+.contact-subtitle {
+  margin: 6px 0 0;
+  color: var(--muted-2);
+  font-size: 0.9rem;
+}
+.contact-grid { gap: 1rem; }
+.contact-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--muted);
+  text-decoration: none;
+  transition:
+    transform 220ms cubic-bezier(.2,.9,.2,1),
+    box-shadow 220ms ease,
+    background-color 220ms ease,
+    border-color 220ms ease;
+  will-change: transform, box-shadow, background-color;
+}
+.contact-card > span {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 210, 255, 0.12);
+  border: 1px solid rgba(0, 210, 255, 0.2);
+  color: #c7f6ff;
+}
+.contact-card:hover,
+.contact-card:focus {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 46px rgba(0, 210, 255, 0.14);
+  background: rgba(0, 210, 255, 0.12);
+  border-color: rgba(0, 210, 255, 0.35);
+  outline: none;
+}
+.contact-card svg { color: inherit; transition: color 220ms ease, transform 220ms ease; }
+.contact-card:hover svg,
+.contact-card:focus svg { transform: scale(1.08); }
+.contact-title { font-weight: 700; color: var(--text-light); }
+.contact-sub { font-size: 0.78rem; color: var(--muted-2); transition: color 220ms ease; }
+.contact-disabled {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px dashed rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.4);
+  background: rgba(255,255,255,0.02);
+}
+.contact-disabled svg { color: rgba(255,255,255,0.35); }
 
         /* New: grid for contacts to show exactly 3 columns on wide screens */
         .grid-responsive {
@@ -1472,25 +1731,89 @@ export default function Home() {
         }
         .stat-inline { display:inline-block; margin-left:8px; color:var(--muted-2); font-weight:600; }
 
-       /* NAV link style: plain text by default, becomes a rounded cyan button on hover */
-.nav-link {
-  color: var(--muted);
-  text-decoration: none;
-  transition: color 180ms ease, transform 160ms ease, background-color 180ms ease, box-shadow 180ms ease, padding 160ms ease;
-  font-weight: 600;
-  display: inline-block;       /* allows padding/background on hover without shifting layout */
-  padding: 4px 6px;            /* small neutral padding so layout doesn't jump when hovered */
-  border-radius: 10px;
-  background: transparent;
+       /* Top navigation */
+.top-nav {
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(10, 16, 36, 0.68);
+  border: 1px solid rgba(0, 210, 255, 0.14);
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
+  backdrop-filter: blur(14px);
+  gap: 12px;
+  flex-wrap: wrap;
 }
-
-/* Hover / focus: show cyan rounded box and lift */
+.nav-links {
+  gap: 0.6rem;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  margin: 0 auto;
+  justify-content: center;
+}
+.nav-link {
+  color: rgba(255, 255, 255, 0.78);
+  text-decoration: none;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 999px;
+  transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  position: relative;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 6px;
+  height: 2px;
+  background: var(--accent-cyan);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms ease;
+  opacity: 0.9;
+}
 .nav-link:hover,
 .nav-link:focus {
-  color: var(--bg-dark);                     /* dark text on light cyan background for contrast */
-  background: var(--accent-cyan);            /* cyan box */
-  transform: translateY(-3px);
-  box-shadow: 0 10px 30px rgba(0,210,255,0.10);
+  color: #0a0e1f;
+  background: rgba(0, 210, 255, 0.85);
+  box-shadow: 0 10px 26px rgba(0, 210, 255, 0.18);
+  transform: translateY(-2px);
+}
+.nav-link:hover::after,
+.nav-link:focus::after {
+  transform: scaleX(1);
+}
+.nav-cta {
+  padding: 0.55rem 1.1rem;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.nav-menu-btn {
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+}
+@media (max-width: 1100px) {
+  .top-nav {
+    justify-content: center;
+    padding: 12px;
+  }
+  .nav-left,
+  .nav-links {
+    width: 100%;
+    justify-content: center;
+  }
+  .nav-left { order: 2; }
+  .nav-links { order: 1; flex-wrap: wrap; }
+}
+@media (max-width: 900px) {
+  .nav-links { gap: 0.35rem; padding: 6px; }
+  .nav-link { padding: 6px 10px; font-size: 0.92rem; }
 }
 
 /* Left profile panel (desktop) - moved slightly up for better alignment with header avatar */
@@ -1724,7 +2047,7 @@ export default function Home() {
 .profile-panel:hover .panel-meta,
 .profile-panel:hover .panel-stat-label,
 .profile-panel:hover .panel-stat-value {
-  color: var(--bg-dark);
+  color: var(--text-light);
 }
 
 /* show panel inline on very small screens */
@@ -1826,6 +2149,156 @@ export default function Home() {
   text-transform: capitalize;
 }
 
+/* Competitive Programming section */
+.cp-section .section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.cp-section .section-subtitle {
+  color: var(--muted-2);
+  font-size: 0.9rem;
+  margin-top: 6px;
+}
+.topic-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--muted-2);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.topic-toggle input { accent-color: var(--accent-cyan); }
+.topic-panel {
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.topic-active { margin-top: 10px; }
+.topic-active-label { color: var(--muted-2); font-size: 0.85rem; }
+.topic-active-list { margin-top: 6px; }
+
+.course-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+@media (min-width: 640px) { .course-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .course-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.course-card {
+  padding: 22px;
+  min-height: 350px;
+  border-radius: 18px;
+  background:
+    radial-gradient(900px 220px at 15% -10%, rgba(0, 210, 255, 0.12), transparent 55%),
+    linear-gradient(140deg, rgba(12, 18, 38, 0.95), rgba(7, 10, 24, 0.98));
+  border: 1px solid rgba(0, 210, 255, 0.12);
+  box-shadow: 0 18px 44px rgba(2, 6, 23, 0.5);
+}
+.course-card:hover {
+  border-color: rgba(0, 210, 255, 0.35);
+  box-shadow: 0 24px 56px rgba(0, 210, 255, 0.14);
+}
+.course-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.course-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-light);
+  margin: 0;
+}
+.course-desc {
+  margin-top: 6px;
+  font-size: 0.94rem;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.68);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.course-badge-wrap { margin-left: 8px; }
+.course-card .course-type-badge {
+  background: rgba(0, 210, 255, 0.12);
+  border-color: rgba(0, 210, 255, 0.35);
+  color: #baf3ff;
+  box-shadow: 0 6px 18px rgba(0, 210, 255, 0.12);
+}
+.course-card .course-type-premium {
+  background: rgba(255, 196, 0, 0.12);
+  border-color: rgba(255, 196, 0, 0.35);
+  color: #ffd891;
+  box-shadow: 0 6px 18px rgba(255, 196, 0, 0.12);
+}
+.course-card .course-type-paid {
+  background: rgba(150, 120, 255, 0.14);
+  border-color: rgba(150, 120, 255, 0.35);
+  color: #d8c8ff;
+  box-shadow: 0 6px 18px rgba(150, 120, 255, 0.14);
+}
+.course-topics { margin-top: 14px; }
+.course-topics-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.55);
+  margin-bottom: 8px;
+}
+.course-card .topic-chip {
+  background: rgba(0, 210, 255, 0.16);
+  border-color: rgba(0, 210, 255, 0.45);
+  color: #e9fbff;
+  box-shadow: 0 8px 18px rgba(0, 210, 255, 0.12);
+}
+.course-card .topic-chip:hover {
+  background: rgba(0, 210, 255, 0.24);
+  color: #ffffff;
+  transform: translateY(-2px);
+}
+.course-footer { margin-top: 18px; }
+.course-stats {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.course-stats span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.84rem;
+}
+.course-action { margin-top: 14px; text-align: center; }
+.course-action .btn { min-width: 140px; border-radius: 10px; }
+
+@media (max-width: 640px) {
+  .course-grid { gap: 0.9rem; }
+  .course-card {
+    padding: 16px;
+    min-height: unset;
+  }
+  .course-title { font-size: 1.02rem; }
+  .course-desc { -webkit-line-clamp: 2; }
+  .course-stats { gap: 8px; }
+  .course-stats span { font-size: 0.8rem; }
+  .course-action .btn { width: 100%; }
+}
+
 /* filter toolbar */
 .topic-toolbar {
   display: flex;
@@ -1882,51 +2355,148 @@ input.p-2.field {
 .course-stats { white-space: normal; display: flex; flex-wrap: wrap; row-gap: 6px; column-gap: 18px; align-items: center; justify-content: center; }
 
 /* -----------------------
-   HOMEPAGE BLOG: layout fix
-   - place stats in one row, and controls (Like + Read more) in their own row
-   - reduce read button size so it fits visually
+   HOMEPAGE BLOG: pro layout
 ------------------------*/
-.home-read-btn {
-  padding: 10px 12px !important;
-  border-radius: 10px !important;
-  font-size: 14px !important;
-  text-transform: none !important;
-  letter-spacing: 0.6px !important;
-  transition: box-shadow 160ms ease, background-color 160ms ease, color 160ms ease !important;
-  transform: none !important;
+.blog-home .blog-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1.25rem;
+  margin-top: 20px;
 }
-.home-like-btn {
-  padding: 10px 12px !important;
-  border-radius: 12px !important;
-  font-size: 16px !important;
-  text-transform: none !important;
-  color: #e5e7eb !important;
+@media (min-width: 640px) {
+  .blog-home .blog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .blog-home .blog-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.blog-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: 1px solid var(--card-border);
+  box-shadow: 0 10px 30px rgba(2,6,23,0.6);
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+.blog-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(0,210,255,0.12);
+  box-shadow: 0 18px 44px rgba(2,6,23,0.75);
+}
+.blog-thumb {
+  height: 180px;
+  width: 100%;
+  background-size: cover;
+  background-position: center;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-radius: 18px 18px 12px 12px;
+}
+.blog-body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.blog-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.blog-badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(0, 210, 255, 0.14);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  color: #c7f6ff;
+}
+.blog-date {
+  color: var(--muted-2);
+  font-size: 0.8rem;
+}
+.blog-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-light);
+  margin: 0;
+}
+.blog-excerpt {
+  color: rgba(226, 232, 240, 0.7);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.blog-stats {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.blog-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--muted-2);
+  font-size: 0.82rem;
+}
+.blog-stat svg {
+  color: #c7f6ff;
+  flex-shrink: 0;
+}
+.blog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+}
+.blog-like-btn {
+  padding: 8px 12px !important;
+  border-radius: 999px !important;
+  font-size: 0.9rem !important;
   display: inline-flex !important;
   align-items: center !important;
   gap: 6px !important;
-  transition: box-shadow 160ms ease, background-color 160ms ease, color 160ms ease !important;
+  background: rgba(255, 45, 85, 0.12) !important;
+  border: 1px solid rgba(255, 45, 85, 0.35) !important;
+  color: #ffd1dc !important;
+  box-shadow: 0 8px 18px rgba(255, 45, 85, 0.12);
   transform: none !important;
 }
-.home-like-btn:disabled {
-  opacity: 0.55 !important;
+.blog-like-btn:disabled {
+  opacity: 0.6 !important;
   cursor: not-allowed !important;
   box-shadow: none !important;
 }
-.home-like-icon { color: #ff2d55; font-size: 16px; line-height: 1; }
-.home-like-count { color: #e5e7eb; font-weight: 600; font-size: 16px; }
-.home-like-count { color: #e5e7eb; font-weight: 600; }
-.home-blog-actions-row {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  align-items: center;
-  margin-top: 10px;
-}
-
-/* ensure small read button won't get translated by global hover */
-.home-read-btn:hover,
-.home-like-btn:hover {
+.blog-like-icon { color: #ff2d55; font-size: 16px; line-height: 1; }
+.blog-like-count { color: #ffe6ec; font-weight: 700; font-size: 0.92rem; }
+.blog-read-btn {
+  padding: 8px 14px !important;
+  border-radius: 999px !important;
+  font-size: 0.9rem !important;
+  letter-spacing: 0.04em !important;
   transform: none !important;
+}
+.blog-read-btn:hover { transform: none !important; }
+.blog-see-all {
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+@media (max-width: 640px) {
+  .blog-thumb { height: 160px; }
+  .blog-body { padding: 14px; }
+  .blog-actions { flex-direction: column; align-items: stretch; }
+  .blog-read-btn { width: 100%; justify-content: center; }
 }
 
 /* -----------------------
@@ -1988,9 +2558,9 @@ input.p-2.field {
 
       <main className={`min-h-screen ${user && profile ? 'with-profile-panel' : ''}`}>
         <header className="max-w-5xl mx-auto p-6 sm:p-10">
-          <nav className="flex items-center justify-between" aria-label="Main navigation">
-            <div className="text-lg font-semibold title" aria-hidden="true"></div>
-            <div className="space-x-4 hidden md:inline-flex items-center">
+          <nav className="top-nav flex items-center justify-between" aria-label="Main navigation">
+            <div className="text-lg font-semibold title nav-left" aria-hidden="true"></div>
+            <div className="nav-links hidden md:inline-flex items-center">
               <a className="nav-link" href="#projects">Projects</a>
               <a className="nav-link" href="#competitive-programming">Competitive Programming</a>
               <Link href="/blog" className="nav-link" >Blog</Link>
@@ -2013,13 +2583,13 @@ input.p-2.field {
 
               {/* Admin stays visible only for admins */}
               {isOperator && (
-                <Link href="/admin" className="btn btn-cyan">
-                  Admin
+                <Link href="/admin" className="btn btn-cyan nav-cta btn-xs">
+                  Admin Dashboard
                 </Link>
               )}
             </div>
             <button
-              className="md:hidden p-2 muted"
+              className="md:hidden p-2 muted nav-menu-btn"
               type="button"
               aria-expanded={mobileMenuOpen ? "true" : "false"}
               aria-controls="mobile-menu"
@@ -2077,28 +2647,30 @@ input.p-2.field {
             </div>
           )}
 
-          <div className="mt-8 card p-6 sm:p-8 shadow">
-            <div className="flex flex-col md:flex-row items-center gap-6">
-              <img className="w-40 h-52 sm:w-48 sm:h-64 rounded-2xl object-cover shadow-lg" src="/avatar.jpg" alt="Kamonasish Roy portrait" />
-              <div className="flex-1">
-                <h1 className="text-2xl sm:text-3xl font-extrabold title">
+          <div className="mt-8 card p-6 sm:p-8 shadow hero-card">
+            <div className="flex flex-col md:flex-row items-center gap-6 hero-main">
+              <div className="hero-photo">
+                <img className="hero-photo-img" src="/avatar.jpg" alt="Kamonasish Roy portrait" />
+              </div>
+              <div className="flex-1 hero-text">
+                <h1 className="text-2xl sm:text-3xl font-extrabold title hero-title">
                   <span className="font-medium muted">Hello, I am </span>
-                  <span style={{ color: 'white' }}>Kamonasish Roy</span>
+                  <span className="hero-name">Kamonasish Roy</span>
                   <span className="font-medium muted">. Welcome to my page!</span>
                 </h1>
-                <ul className="mt-3 muted" style={{ listStyle: 'none', padding: 0, margin: 0, lineHeight: 1.8 }}>
-                  <li>&bull; Software Engineer</li>
-                  <li>&bull; Competitive Programmer</li>
-                  <li>&bull; Mentor</li>
-                  <li>&bull; Blogger</li>
-                </ul>
+                <div className="hero-roles">
+                  <span>Software Engineer</span>
+                  <span>Competitive Programmer</span>
+                  <span>Mentor</span>
+                  <span>Blogger</span>
+                </div>
                 <div className="mt-4 flex gap-3">
-                  <Link className="btn btn-cyan" href="/about" title="Click here to visit Portfolio">About Me</Link>
+                  <Link className="btn btn-cyan hero-cta" href="/about" title="Click here to visit Portfolio">About Me</Link>
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 p-3 rounded-lg hero-stats-grid text-center" style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <div className="mt-6 p-3 rounded-lg hero-stats-grid text-center hero-stats">
               <div>
                 <div className="text-sm muted-2">Experience</div>
                 <div className="font-semibold title">2+ yrs</div>
@@ -2243,60 +2815,62 @@ input.p-2.field {
           </div>
         )}
 
-        <section id="projects" className="max-w-5xl mx-auto p-6 sm:p-10">
+        <section id="projects" className="max-w-5xl mx-auto p-6 sm:p-10 featured-projects">
           <h2 className="text-xl font-bold mb-4 title">Featured Projects</h2>
           {featuredProjectsLoading ? (
             <div className="muted-2">Loading projects...</div>
           ) : (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="project-grid">
                 {visibleProjects.map((p) => (
                   <article
                     key={p.id}
-                    className="hover-card p-6 text-center"
+                    className="hover-card project-card"
                     role="article"
                   >
                     <div
-                      className="h-36 bg-gradient-to-r from-slate-700 to-slate-500 rounded-md mb-3 mx-auto w-full"
+                      className="project-thumb"
                       role="img"
                       aria-label={`${p.title} preview`}
                       style={p.thumbnail ? { backgroundImage: `url(${p.thumbnail})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
                     ></div>
-                    <h3 className="font-semibold text-lg title">{p.title}</h3>
-                    <p className="project-desc muted-2 mt-2">{p.desc}</p>
-                    <div className="mt-3 flex flex-wrap gap-2 justify-center">
-                      {(p.tags || []).map((t, i) => (
-                        <span key={i} className="text-xs px-2 py-1 bg-white/6 rounded text-white/90">{t}</span>
-                      ))}
-                    </div>
-                    <div className="mt-4 flex gap-2 justify-center">
-                      {p.url ? (
-                        <a className="project-action" href={p.url} target="_blank" rel="noopener noreferrer">Live Demo</a>
-                      ) : (
-                        <button className="project-action" type="button" disabled>Live Demo</button>
-                      )}
-                      {p.github_url ? (
-                        <a
-                          className="project-action"
-                          href={p.github_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="Open GitHub project"
-                          title="GitHub"
-                        >
-                          <IconGitHub className="w-4 h-4" />
-                        </a>
-                      ) : (
-                        <button
-                          className="project-action"
-                          type="button"
-                          disabled
-                          aria-label="GitHub link not available"
-                          title="GitHub"
-                        >
-                          <IconGitHub className="w-4 h-4" />
-                        </button>
-                      )}
+                    <div className="project-content">
+                      <h3 className="project-title">{p.title}</h3>
+                      <p className="project-desc">{p.desc}</p>
+                      <div className="project-tags">
+                        {(p.tags || []).map((t, i) => (
+                          <span key={i} className="project-tag">{t}</span>
+                        ))}
+                      </div>
+                      <div className="project-actions">
+                        {p.url ? (
+                          <a className="project-action" href={p.url} target="_blank" rel="noopener noreferrer">Live Demo</a>
+                        ) : (
+                          <button className="project-action" type="button" disabled>Live Demo</button>
+                        )}
+                        {p.github_url ? (
+                          <a
+                            className="project-action"
+                            href={p.github_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="Open GitHub project"
+                            title="GitHub"
+                          >
+                            <IconGitHub className="w-4 h-4" />
+                          </a>
+                        ) : (
+                          <button
+                            className="project-action"
+                            type="button"
+                            disabled
+                            aria-label="GitHub link not available"
+                            title="GitHub"
+                          >
+                            <IconGitHub className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -2313,20 +2887,24 @@ input.p-2.field {
           )}
         </section>
 
-        <section id="competitive-programming" className="max-w-5xl mx-auto p-6 sm:p-10">
-          <h2 className="text-xl font-bold mb-4 title">Learn Competitive Programming</h2>
+        <section id="competitive-programming" className="max-w-5xl mx-auto p-6 sm:p-10 cp-section">
+          <div className="section-head">
+            <div>
+              <h2 className="text-xl font-bold title">Learn Competitive Programming</h2>
+              <div className="section-subtitle">Pick a track, filter by topic, and start solving.</div>
+            </div>
+            <label className="topic-toggle">
+              <input type="checkbox" checked={showTopicControls} onChange={(e) => setShowTopicControls(e.target.checked)} />
+              <span>Show topic filters</span>
+            </label>
+          </div>
 
           {/* Topic controls */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <input type="checkbox" checked={showTopicControls} onChange={(e) => setShowTopicControls(e.target.checked)} />
-              <span style={{ color: 'var(--muted-2)', fontSize: 14 }}>Show topic filters</span>
-            </label>
-
+          <div className="topic-panel">
             {showTopicControls && (
               <form
                 onSubmit={(e) => { e.preventDefault(); addTopicFromInput(topicInputValue); }}
-                style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+                className="topic-toolbar"
               >
                 <select
                   value={topicPickerValue}
@@ -2379,9 +2957,9 @@ input.p-2.field {
             )}
 
             {showTopicControls && selectedTopics.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ color: "var(--muted-2)" }}>Filtering by:</div>
-                <div style={{ marginTop: 6 }}>
+              <div className="topic-active">
+                <div className="topic-active-label">Filtering by:</div>
+                <div className="topic-active-list">
                   {selectedTopics.map((s, i) => (
                     <button key={s} onClick={() => toggleTopicFilter(s)} className="topic-chip selected" style={{ marginRight: 6 }}>
                       {s} x
@@ -2400,7 +2978,7 @@ input.p-2.field {
               {visibleCourses.length === 0 ? (
                 <div className="muted-2">No courses match the selected topics.</div>
               ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="course-grid">
                   {visibleCourses.map((c) => (
                     <CourseCard key={c.id} courseObj={c} isCpFallback={c.slug === 'cp-foundations'} />
                   ))}
@@ -2416,7 +2994,7 @@ input.p-2.field {
               )}
             </>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="course-grid">
               <CourseCard courseObj={{
                 id: cpCourse?.id ?? 'cp-fallback',
                 slug: cpCourse?.slug ?? 'cp-foundations',
@@ -2453,75 +3031,81 @@ input.p-2.field {
         </section>
 
         {/* --- Read Blog Post (homepage preview) --- */}
-        <section id="blog-home" className="max-w-5xl mx-auto p-6 sm:p-10">
-          <h2 className="text-xl font-bold mb-4 title">Read Blog Post</h2>
+        <section id="blog-home" className="max-w-5xl mx-auto p-6 sm:p-10 blog-home">
+          <div className="section-head">
+            <div>
+              <h2 className="text-xl font-bold title">Read Blog Post</h2>
+            </div>
+          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {homePosts.map((p) => (
-              <article key={p.id} className="hover-card p-6 text-left" style={{ minHeight: 320 }}>
-                <div style={{ height: 160, backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.45)), url(${p.thumbnail})`, backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: 8 }} role="img" aria-label={p.title} />
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span className="course-type-badge">Blog</span>
-                    <span className="muted-2" style={{ fontSize: 13 }}>{(p.created_at || '').slice(0, 10)}</span>
+          <div className="blog-grid">
+            {homePosts.map((p) => {
+              const dt = formatHomeDateParts(p.created_at)
+              const dateLabel = dt.date ? (dt.time ? `${dt.date} • ${dt.time}` : dt.date) : ''
+              return (
+              <article key={p.id} className="blog-card hover-card">
+                <div
+                  className="blog-thumb"
+                  style={{ backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.45)), url(${p.thumbnail})` }}
+                  role="img"
+                  aria-label={p.title}
+                />
+                <div className="blog-body">
+                  <div className="blog-meta">
+                    <span className="blog-badge">Blog</span>
+                    <span className="blog-date">{dateLabel}</span>
                   </div>
-                  <h3 className="font-semibold title" style={{ marginTop: 8 }}>{p.title}</h3>
-                  <p className="muted-2" style={{ marginTop: 6 }}>{p.excerpt}</p>
+                  <h3 className="blog-title">{p.title}</h3>
+                  <p className="blog-excerpt">{p.excerpt}</p>
 
-                  {/* Stats row */}
-                  <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', color: 'var(--muted-2)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7z" stroke="currentColor" strokeWidth="1.2"/></svg>
-                        <span>{p.reads ?? 0} Reads</span>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="1.2"/></svg>
-                        <span>{homeCommentsCount[p.id] ?? 0} Comments</span>
-                      </div>
+                  <div className="blog-stats">
+                    <div className="blog-stat">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7z" stroke="currentColor" strokeWidth="1.2"/></svg>
+                      <span>{p.reads ?? 0} Reads</span>
                     </div>
-
-                    {/* intentionally empty cell so stats and actions don't collide */}
-                    <div style={{ width: 1, height: 1, opacity: 0 }} />
+                    <div className="blog-stat">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="1.2"/></svg>
+                      <span>{homeCommentsCount[p.id] ?? 0} Comments</span>
+                    </div>
                   </div>
 
-                  {/* Actions row moved to its own line so it can't overlap */}
-                  <div className="home-blog-actions-row">
+                  <div className="blog-actions">
                     <button
-                      className={`btn home-like-btn`}
+                      className="btn blog-like-btn"
                       onClick={() => handleHomeLike(p.id)}
                       disabled={!user}
                       aria-disabled={!user}
                       title={!user ? 'Please log in to like this post.' : homeLikedByUser[p.id] ? 'Liked' : 'Like'}
                       aria-pressed={!!homeLikedByUser[p.id]}
                     >
-                      <span className="home-like-icon" aria-hidden>&#10084;</span>
-                      <span className="home-like-count">{homeLikesLocal[p.id] ?? p.likes ?? 0}</span>
+                      <span className="blog-like-icon" aria-hidden>&#10084;</span>
+                      <span className="blog-like-count">{homeLikesLocal[p.id] ?? p.likes ?? 0}</span>
                     </button>
 
-                    <Link href={`/blog`} className="btn btn-cyan home-read-btn" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    <Link href={`/blog`} className="btn btn-cyan blog-read-btn" style={{ display: 'inline-flex', alignItems: 'center' }}>
                       Read more
                     </Link>
                   </div>
-
                 </div>
               </article>
-            ))}
+            )})}
           </div>
 
           <div style={{ marginTop: 18, textAlign: 'center' }}>
-            <Link href="/blog" className="btn btn-cyan">See all posts</Link>
+            <Link href="/blog" className="btn btn-cyan blog-see-all">See all posts</Link>
           </div>
         </section>
 
-        <footer id="contact" className="max-w-5xl mx-auto p-6 sm:p-10">
-          <div className="bg-white/5 p-6 rounded-lg shadow">
-            <h4 className="font-semibold text-lg text-center title">Get in touch</h4>
-           <br/>
+        <footer id="contact" className="max-w-5xl mx-auto p-6 sm:p-10 contact-section">
+          <div className="contact-wrap">
+            <div className="contact-head">
+              <div>
+                <h4 className="font-semibold text-lg title">Get in touch</h4>
+              </div>
+            </div>
 
             {/* grid-responsive updated to 3 columns at large screens */}
-            <div className="grid-responsive">
+            <div className="grid-responsive contact-grid">
               {/* Email */}
               {contacts.email ? (
                 <a href={`mailto:${contacts.email}`} className="contact-card" aria-label="Send email">

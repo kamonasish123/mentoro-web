@@ -36,8 +36,15 @@ export default function CourseRanklist() {
 
   const [loadingPage, setLoadingPage] = useState(false);
   const [pollingEnabled, setPollingEnabled] = useState(false); // not needed if realtime working
+  const [theme, setTheme] = useState("light");
 
   const POLL_INTERVAL_MS = 30 * 1000;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("enrollTheme");
+    if (saved === "dark" || saved === "light") setTheme(saved);
+  }, []);
 
   // Helper: fetch public profiles via RPC
   async function fetchProfilesMap(userIds) {
@@ -312,7 +319,7 @@ export default function CourseRanklist() {
   const pagesCount = Math.max(1, Math.ceil((totalCount || 0) / pageSize));
 
   return (
-    <div className="page-wrap">
+    <div className={`page-wrap ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
       <Head><title>Ranklist — {course.title}</title></Head>
 
       <main className="container">
@@ -484,6 +491,19 @@ export default function CourseRanklist() {
           background-size: 50px 50px;
           padding: 36px 20px;
         }
+        .theme-light.page-wrap {
+          background: #f8fafc;
+          color: #0f172a;
+          background-image: none;
+        }
+        .theme-dark.page-wrap {
+          background:
+            radial-gradient(1200px 800px at 10% 0%, rgba(56,189,248,0.08), transparent 60%),
+            radial-gradient(1200px 800px at 90% 0%, rgba(34,197,94,0.08), transparent 60%),
+            #0b1220;
+          color: #e2e8f0;
+          background-image: none;
+        }
 
         .container {
           max-width: 900px;
@@ -526,6 +546,18 @@ export default function CourseRanklist() {
           box-shadow: 0 10px 30px rgba(0,0,0,0.15);
           display: inline-block;
         }
+        .theme-dark .title h1 {
+          color: #e2e8f0;
+          background: rgba(15,23,42,0.85);
+          border-color: rgba(148,163,184,0.2);
+          box-shadow: 0 10px 28px rgba(2,6,23,0.5);
+        }
+        .theme-light .title h1 {
+          color: #0f172a;
+          background: #ffffff;
+          border-color: rgba(15,23,42,0.08);
+          box-shadow: 0 8px 24px rgba(15,23,42,0.08);
+        }
         .muted { color: var(--muted-2); margin:4px 0 0; font-size: 13px; }
 
         .actions { display:flex; gap:10px; align-items:center; margin-left: auto; position: relative; z-index: 2; }
@@ -541,6 +573,16 @@ export default function CourseRanklist() {
           font-weight: 700;
           text-decoration: none;
         }
+        .theme-light .btn {
+          background: #ffffff;
+          color: #0f172a;
+          border-color: rgba(15,23,42,0.1);
+        }
+        .theme-dark .btn {
+          background: rgba(15,23,42,0.7);
+          color: #e2e8f0;
+          border-color: rgba(148,163,184,0.25);
+        }
         .btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,210,255,0.06); border-color: rgba(0,210,255,0.18); }
 
         .btn[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
@@ -550,6 +592,8 @@ export default function CourseRanklist() {
           color: #002;
           border: 1px solid rgba(0,210,255,0.18);
         }
+        .theme-light .btn-cyan { background: #e0f2fe; color: #0f172a; border-color: #7dd3fc; }
+        .theme-dark .btn-cyan { background: rgba(2,132,199,0.25); color: #e2e8f0; border-color: rgba(56,189,248,0.4); }
 
         /* card */
         .content-card {
@@ -558,6 +602,16 @@ export default function CourseRanklist() {
           padding: 10px;
           border: 1px solid rgba(255,255,255,0.04);
           box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+        }
+        .theme-light .content-card {
+          background: #ffffff;
+          border-color: rgba(15,23,42,0.08);
+          box-shadow: 0 10px 24px rgba(15,23,42,0.08);
+        }
+        .theme-dark .content-card {
+          background: rgba(15,23,42,0.92);
+          border-color: rgba(148,163,184,0.18);
+          box-shadow: 0 18px 40px rgba(2,6,23,0.6);
         }
 
         .list-header {
@@ -573,6 +627,16 @@ export default function CourseRanklist() {
           top: 8px;            /* sticky header */
           background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
           z-index: 2;
+        }
+        .theme-light .list-header {
+          color: #64748b;
+          border-bottom-color: rgba(15,23,42,0.08);
+          background: #f8fafc;
+        }
+        .theme-dark .list-header {
+          color: #94a3b8;
+          border-bottom-color: rgba(148,163,184,0.12);
+          background: rgba(15,23,42,0.7);
         }
 
         .list-body { display:flex; flex-direction:column; }
@@ -594,6 +658,15 @@ export default function CourseRanklist() {
           box-shadow: 0 14px 40px rgba(0,0,0,0.15);
           color: #000;
         }
+        .theme-dark .row {
+          border-color: rgba(148,163,184,0.2);
+          background: rgba(15,23,42,0.7);
+          color: #e2e8f0;
+        }
+        .theme-dark .row:hover {
+          color: #e2e8f0;
+          background: rgba(30,41,59,0.8);
+        }
 
         .row + .row { border-top: none; }
 
@@ -609,6 +682,11 @@ export default function CourseRanklist() {
           background: rgba(0, 210, 255, 0.18);
           border: 1px solid rgba(0, 210, 255, 0.35);
           box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+        }
+        .theme-dark .rank-num {
+          color: #e2e8f0;
+          background: rgba(0, 210, 255, 0.12);
+          border-color: rgba(0, 210, 255, 0.25);
         }
         .name-bold {
           color: #22d3ee;        /* cyan-400 */
@@ -654,6 +732,18 @@ export default function CourseRanklist() {
           color: #064e3b; /* green */
           text-align:center;
         }
+        .theme-dark .solved-badge {
+          background: rgba(15,23,42,0.6);
+          color: #34d399;
+        }
+
+        .theme-dark input,
+        .theme-dark select {
+          background: rgba(15,23,42,0.8);
+          color: #e2e8f0;
+          border-color: rgba(148,163,184,0.3) !important;
+        }
+        .theme-dark option { color: #0f172a; }
 
         /* top 3 highlight */
         .top-three { background: linear-gradient(90deg, rgba(0,210,255,0.05), rgba(255,255,255,0.02)); }

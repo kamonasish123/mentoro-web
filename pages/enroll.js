@@ -33,6 +33,9 @@ export default function EnrollPage() {
   // NEW: difficulty filter state ('all'|'easy'|'medium'|'hard')
   const [difficultyFilter, setDifficultyFilter] = useState("all");
   const [hideSolved, setHideSolved] = useState(false);
+  const [randomPickActive, setRandomPickActive] = useState(false);
+  const [randomPickId, setRandomPickId] = useState(null);
+  const [theme, setTheme] = useState("light");
 
   // modal state for "Mark solved"
   const [markModal, setMarkModal] = useState({ open: false, problem: null });
@@ -740,6 +743,17 @@ export default function EnrollPage() {
     if (last) setLocalUserId(last);
   }, []);
 
+  // load/save theme preference
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("enrollTheme");
+    if (saved === "dark" || saved === "light") setTheme(saved);
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("enrollTheme", theme);
+  }, [theme]);
+
   // when logged out, allow switching local progress profile
   useEffect(() => {
     if (sessionUser) return;
@@ -796,6 +810,21 @@ export default function EnrollPage() {
       clearInterval(id);
     };
   }, []);
+
+  // If the picked problem becomes solved, re-pick from remaining unsolved
+  useEffect(() => {
+    if (!randomPickActive) return;
+    if (!randomPickId) return;
+    if (status[randomPickId] === "solved") {
+      const unsolved = (problems || []).filter((p) => p?.id && status[p.id] !== "solved");
+      if (unsolved.length === 0) {
+        setRandomPickId(null);
+        return;
+      }
+      const idx = Math.floor(Math.random() * unsolved.length);
+      setRandomPickId(unsolved[idx].id);
+    }
+  }, [randomPickActive, randomPickId, status, problems]);
 
   async function handleEnroll() {
     try {
@@ -1247,17 +1276,43 @@ export default function EnrollPage() {
   }
 
   // apply difficulty filter when rendering
-  const filteredProblems = problems.filter((p) => {
+  const filteredProblemsBase = problems.filter((p) => {
     if (!p) return false;
     if (hideSolved && status[p?.id] === "solved") return false;
     const d = (p.difficulty || "").toLowerCase();
     if (difficultyFilter === "all") return true;
     return d === difficultyFilter;
   });
+  const filteredProblems = randomPickActive
+    ? filteredProblemsBase.filter((p) => p?.id === randomPickId)
+    : filteredProblemsBase;
 
   const totalProblemCount = problems.length;
   const solvedProblemCount = problems.reduce((acc, p) => (status[p?.id] === "solved" ? acc + 1 : acc), 0);
   const remainingProblemCount = Math.max(0, totalProblemCount - solvedProblemCount);
+
+  function pickRandomUnsolved() {
+    const unsolved = (problems || []).filter((p) => {
+      if (!p?.id) return false;
+      if (status[p.id] === "solved") return false;
+      if (difficultyFilter === "all") return true;
+      return String(p.difficulty || "").toLowerCase() === difficultyFilter;
+    });
+    if (unsolved.length === 0) {
+      setRandomPickActive(true);
+      setRandomPickId(null);
+      return;
+    }
+    const idx = Math.floor(Math.random() * unsolved.length);
+    setRandomPickActive(true);
+    setRandomPickId(unsolved[idx].id);
+  }
+
+  function clearRandomPick() {
+    setRandomPickActive(false);
+    setRandomPickId(null);
+  }
+
 
   return (
     <>
@@ -1265,37 +1320,50 @@ export default function EnrollPage() {
         <title>Enroll — {course.title}</title>
       </Head>
 
-      <main className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-slate-200 p-6">
+      <main className={`min-h-screen p-6 ${theme === "dark" ? "enroll-theme-dark" : "enroll-theme-light"}`}>
         <div className="max-w-7xl mx-auto grid lg:grid-cols-4 gap-6">
 
           {/* LEFT: PROBLEMS LIST */}
-          <div className="lg:col-span-3 bg-white/80 backdrop-blur rounded-2xl shadow-xl p-6" id="problems-list">
-            <div className="flex items-start justify-between">
+          <div className="lg:col-span-3 problems-card" id="problems-list">
+            <div className="flex items-start justify-between course-header">
               <div>
-                <h1 className="text-2xl font-bold mb-1">{course.title}</h1>
-                <p className="text-slate-600 mb-3">{course.description || ""}</p>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mb-2">Course Overview</div>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-900 mb-1">{course.title}</h1>
+                <p className="text-slate-500 mb-3">{course.description || ""}</p>
               </div>
               <div>
-                {enrolled ? (
-                  <span className="inline-block px-3 py-1 rounded bg-emerald-100 text-emerald-700 font-medium">Enrolled</span>
-                ) : (
-                  <button onClick={handleEnroll} className="btn btn-cyan">Enroll</button>
-                )}
+                <div className="flex items-center gap-2 justify-end">
+                  {enrolled ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold text-sm">
+                      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                      Enrolled
+                    </span>
+                  ) : (
+                    <button onClick={handleEnroll} className="btn btn-cyan">Enroll</button>
+                  )}
+                  <button
+                    type="button"
+                    className="theme-toggle ml-2"
+                    onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                  >
+                    {theme === "dark" ? "Light mode" : "Dark mode"}
+                  </button>
+                </div>
               </div>
             </div>
 
             {/* User progress summary */}
-            <div className="mb-4 flex justify-center">
+            <div className="mb-5 flex justify-center">
               <div className="w-full max-w-md grid grid-cols-3 gap-3 text-sm">
-                <div className="rounded-lg bg-white/70 border border-slate-200 px-3 py-2 text-center">
+                <div className="rounded-xl bg-slate-50/80 border border-slate-200 px-3 py-2 text-center shadow-sm progress-card">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
                   <div className="text-base font-semibold text-slate-900">{totalProblemCount}</div>
                 </div>
-                <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2 text-center">
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2 text-center shadow-sm progress-card">
                   <div className="text-[11px] uppercase tracking-wide text-emerald-700">Solved</div>
                   <div className="text-base font-semibold text-emerald-700">{solvedProblemCount}</div>
                 </div>
-                <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-center">
+                <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-center shadow-sm progress-card">
                   <div className="text-[11px] uppercase tracking-wide text-amber-700">Remaining</div>
                   <div className="text-base font-semibold text-amber-700">{remainingProblemCount}</div>
                 </div>
@@ -1337,29 +1405,47 @@ export default function EnrollPage() {
 
 
             {/* Difficulty filter UI */}
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-600 mr-2">Filter difficulty:</span>
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 shadow-sm filter-bar">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Filter</span>
                 <select
                   value={difficultyFilter}
                   onChange={(e) => setDifficultyFilter(e.target.value)}
-                  className="p-2 field"
+                  className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium shadow-sm"
                 >
                   <option value="all">All</option>
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
                 </select>
-                <label className="ml-3 inline-flex items-center gap-2 text-sm text-slate-600">
+                <label className="inline-flex items-center gap-2 text-sm text-slate-600">
                   <input
                     type="checkbox"
-                    className="h-4 w-4"
+                    className="h-4 w-4 accent-teal-600"
                     checked={hideSolved}
                     onChange={(e) => setHideSolved(e.target.checked)}
                   />
                   Hide solved
                 </label>
-                <div className="text-sm text-slate-500 ml-3">Showing <strong>{filteredProblems.length}</strong> of <strong>{problems.length}</strong></div>
+                <button
+                  type="button"
+                  className="pick-random-btn px-4 py-2 rounded-lg bg-gradient-to-r from-teal-600 to-cyan-600 text-white text-sm font-semibold shadow-sm hover:opacity-95 transition"
+                  onClick={pickRandomUnsolved}
+                >
+                  Pick random unsolved
+                </button>
+                {randomPickActive && (
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium shadow-sm hover:bg-slate-50 transition"
+                    onClick={clearRandomPick}
+                  >
+                    Clear random
+                  </button>
+                )}
+              </div>
+              <div className="ml-auto text-sm text-slate-500 showing-text">
+                Showing <strong>{filteredProblems.length}</strong> of <strong>{problems.length}</strong>
               </div>
             </div>
 
@@ -1369,28 +1455,22 @@ export default function EnrollPage() {
               ) : (
                 <>
                   {/* Header row */}
-                  <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-transparent p-2 px-4">
+                  <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-transparent p-2 px-4 text-[11px] uppercase tracking-wide text-slate-400 problem-header">
                     <div className="md:col-span-2">
-                      <div className="text-sm text-slate-500 font-medium">Problem</div>
+                      <div className="font-semibold">Problem</div>
                     </div>
 
-                    <div className="text-sm text-slate-500 text-center">
-                      <span className="font-semibold">
-                        <span className="text-emerald-600">Solved</span>
-                        {" / "}
-                        <span className="text-amber-700">Attempted</span>
-                      </span>
-                    </div>
+                    <div className="text-center font-semibold">Solved / Attempted</div>
 
                     <div className="flex justify-center">
-                      <div className="text-sm text-slate-500 font-medium">Difficulty</div>
+                      <div className="font-semibold">Difficulty</div>
                     </div>
 
-                    <div className="text-sm text-slate-500 font-semibold">Status</div>
+                    <div className="font-semibold">Status</div>
 
-                    <div className="text-sm text-slate-500 text-center font-semibold">Like / Dislike</div>
+                    <div className="text-center font-semibold">Like / Dislike</div>
 
-                    <div className="text-sm text-slate-500 text-right font-semibold">Solution</div>
+                    <div className="text-right font-semibold">Solution</div>
                   </div>
 
                   {/* Problems */}
@@ -1411,7 +1491,7 @@ export default function EnrollPage() {
                     return (
                       <div
                         key={p.id}
-                        className="group grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-slate-50 rounded-xl p-4"
+                        className="group grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-white rounded-xl p-4 border border-slate-200 shadow-sm hover:shadow-md transition problem-row"
                       >
                       <div className="md:col-span-2">
                         <div className="font-semibold">{p.title}</div>
@@ -1491,7 +1571,7 @@ export default function EnrollPage() {
                         {solutionUnlocked[p.id] ? (
                           <button
                             onClick={() => handleViewSolution(p)}
-                            className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-medium"
+                            className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-sm hover:opacity-90 transition"
                           >
                             View Solution
                           </button>
@@ -1515,8 +1595,11 @@ export default function EnrollPage() {
           </div>
 
           {/* RIGHT: Ranklist */}
-          <div className="bg-white/80 backdrop-blur rounded-2xl shadow-xl p-6">
-            <h2 className="text-xl font-bold mb-4">🏆 Ranklist (Top 10)</h2>
+          <div className="ranklist-card">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-slate-900">🏆 Ranklist (Top 10)</h2>
+              <span className="text-xs uppercase tracking-wide text-slate-400">Live</span>
+            </div>
 
             <div className="space-y-3">
               {ranklist.length === 0 ? (
@@ -1528,16 +1611,17 @@ export default function EnrollPage() {
                   const first = raw.charAt(0) || "";
                   const rest = raw.slice(1) || "";
                   return (
-                    <div key={u.id + "-" + i} className="flex justify-between items-center bg-slate-50 rounded-lg px-3 py-2">
+                    <div key={u.id + "-" + i} className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 shadow-sm ranklist-row">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold">{i + 1}.</span>
+                        <span className="ranklist-num-badge">{i + 1}</span>
 
                         {/* display name: first letter black, rest red (no space between) */}
-                        <span className="font-semibold" style={{ display: "inline-block", lineHeight: 1 }}>
-                          <span style={{ color: "#000000", fontWeight: 800 }}>{first}</span><span style={{ color: "#ef4444", fontWeight: 800 }}>{rest}</span>
+                        <span className="ranklist-name">
+                          <span className="ranklist-name-first">{first}</span>
+                          <span className="ranklist-name-rest">{rest}</span>
                         </span>
                       </div>
-                      <span className="font-medium text-slate-700">{u.total ?? 0}</span>
+                      <span className="ranklist-total-badge">{u.total ?? 0}</span>
                     </div>
                   );
                 })
@@ -1572,14 +1656,14 @@ export default function EnrollPage() {
         {solutionModal.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/50" onClick={closeSolutionModal} />
-            <div className="relative z-10 bg-white rounded-lg shadow-xl p-6 w-full max-w-3xl max-h-[80vh] overflow-auto">
+            <div className="solution-modal relative z-10 bg-white rounded-lg shadow-xl p-6 w-full max-w-3xl max-h-[80vh] overflow-auto">
               <div className="flex justify-between items-start gap-4 mb-4">
                 <div>
                   <h3 className="text-lg font-semibold">Solution — {solutionModal.problem?.title}</h3>
                   <div className="text-sm text-slate-500">{solutionModal.problem?.platform} • {solutionModal.problem?.difficulty}</div>
                 </div>
                 <div>
-                  <button onClick={closeSolutionModal} className="px-3 py-1 rounded bg-slate-200">Close</button>
+                  <button onClick={closeSolutionModal} className="px-3 py-1 rounded bg-slate-200 text-slate-900">Close</button>
                 </div>
               </div>
 
@@ -1634,6 +1718,205 @@ export default function EnrollPage() {
           </div>
         )}
       </main>
+      <style jsx>{`
+        .enroll-theme-light {
+          background: linear-gradient(135deg, #f8fafc 0%, #ffffff 40%, #f1f5f9 100%);
+          color: #1f2937;
+        }
+        .enroll-theme-dark {
+          background: radial-gradient(1200px 800px at 10% 0%, rgba(56,189,248,0.08), transparent 60%),
+                      radial-gradient(1200px 800px at 90% 0%, rgba(34,197,94,0.08), transparent 60%),
+                      #0b1220;
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .problems-card,
+        .enroll-theme-dark .ranklist-card {
+          background: rgba(15,23,42,0.92);
+          border: 1px solid rgba(148,163,184,0.18);
+          box-shadow: 0 18px 40px rgba(2,6,23,0.6);
+        }
+        .enroll-theme-light .problems-card,
+        .enroll-theme-light .ranklist-card {
+          background: rgba(255,255,255,0.92);
+          border: 1px solid rgba(226,232,240,1);
+          box-shadow: 0 18px 40px rgba(15,23,42,0.1);
+          border-radius: 16px;
+          padding: 24px;
+        }
+        .problems-card {
+          border-radius: 16px;
+          padding: 24px;
+          backdrop-filter: blur(10px);
+        }
+        .ranklist-card {
+          border-radius: 16px;
+          padding: 24px;
+          backdrop-filter: blur(10px);
+        }
+        .enroll-theme-dark .course-header h1,
+        .enroll-theme-dark .course-header p,
+        .enroll-theme-dark .course-header div {
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .course-header .text-slate-500 {
+          color: #94a3b8;
+        }
+        .enroll-theme-dark .progress-card {
+          background: rgba(15,23,42,0.6) !important;
+          border-color: rgba(148,163,184,0.2) !important;
+        }
+        .enroll-theme-dark .progress-card .text-slate-900 {
+          color: #ffffff !important;
+        }
+        .enroll-theme-dark .progress-card .text-slate-500 {
+          color: #94a3b8 !important;
+        }
+        .enroll-theme-dark .filter-bar {
+          background: rgba(15,23,42,0.7) !important;
+          border-color: rgba(148,163,184,0.2) !important;
+        }
+        .enroll-theme-dark .filter-bar select,
+        .enroll-theme-dark .filter-bar button,
+        .enroll-theme-dark .filter-bar label,
+        .enroll-theme-dark .filter-bar span {
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .filter-bar button {
+          border-color: rgba(148,163,184,0.35);
+          background: rgba(30,41,59,0.6);
+        }
+        .enroll-theme-dark .filter-bar .pick-random-btn {
+          background: linear-gradient(90deg, #0f766e, #0891b2);
+          border-color: transparent;
+          color: #ffffff;
+        }
+        .enroll-theme-dark .filter-bar select {
+          background: rgba(30,41,59,0.8);
+          border-color: rgba(148,163,184,0.35);
+        }
+        .enroll-theme-dark .filter-bar option {
+          color: #0f172a;
+        }
+        .enroll-theme-dark .problem-header {
+          color: #94a3b8 !important;
+        }
+        .enroll-theme-dark .problem-row {
+          background: rgba(15,23,42,0.7) !important;
+          border-color: rgba(148,163,184,0.2) !important;
+        }
+        .enroll-theme-dark .problem-row:hover {
+          background: rgba(30,41,59,0.8) !important;
+        }
+        .enroll-theme-dark .showing-text {
+          color: #e2e8f0 !important;
+        }
+        .enroll-theme-dark .showing-text strong {
+          color: #ffffff;
+        }
+        .enroll-theme-dark .ranklist-card,
+        .enroll-theme-dark .ranklist-card h2,
+        .enroll-theme-dark .ranklist-card span,
+        .enroll-theme-dark .ranklist-card a {
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .ranklist-card .text-slate-400 {
+          color: #94a3b8 !important;
+        }
+        .enroll-theme-dark .ranklist-row {
+          background: rgba(15,23,42,0.7) !important;
+          border-color: rgba(148,163,184,0.25) !important;
+        }
+        .ranklist-num-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 26px;
+          height: 26px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 800;
+          background: rgba(0, 210, 255, 0.12);
+          border: 1px solid rgba(0, 210, 255, 0.35);
+          color: #0f172a;
+        }
+        .ranklist-name {
+          font-weight: 800;
+          display: inline-block;
+          line-height: 1;
+        }
+        .ranklist-name-first { color: #0f172a; }
+        .ranklist-name-rest { color: #ef4444; }
+        .ranklist-total {
+          font-weight: 700;
+          color: #334155;
+        }
+        .ranklist-total-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 26px;
+          height: 26px;
+          padding: 0 8px;
+          border-radius: 999px;
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid rgba(16, 185, 129, 0.45);
+          color: #065f46;
+          font-weight: 800;
+          font-size: 12px;
+        }
+        .enroll-theme-dark .ranklist-num-badge {
+          background: rgba(0, 210, 255, 0.18);
+          border-color: rgba(0, 210, 255, 0.35);
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .ranklist-name {
+          background: #ffffff;
+          padding: 2px 6px;
+          border-radius: 6px;
+        }
+        .enroll-theme-dark .ranklist-name-first { color: #000000 !important; }
+        .enroll-theme-dark .ranklist-name-rest { color: #ef4444 !important; }
+        .enroll-theme-dark .ranklist-total { color: #e2e8f0; }
+        .enroll-theme-dark .ranklist-total-badge {
+          background: rgba(16, 185, 129, 0.2);
+          border-color: rgba(16, 185, 129, 0.5);
+          color: #6ee7b7;
+        }
+        .enroll-theme-dark .solution-modal {
+          background: #0f172a;
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .solution-modal h3,
+        .enroll-theme-dark .solution-modal .text-slate-500 {
+          color: #cbd5f5 !important;
+        }
+        .enroll-theme-dark .solution-modal .bg-slate-50 {
+          background: rgba(15,23,42,0.7) !important;
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .solution-modal pre {
+          color: #e2e8f0;
+        }
+        .theme-toggle {
+          padding: 0.45rem 0.85rem;
+          border-radius: 999px;
+          border: 1px solid rgba(15,23,42,0.15);
+          background: #fff;
+          font-size: 0.8rem;
+          font-weight: 600;
+          box-shadow: 0 6px 18px rgba(15,23,42,0.08);
+          transition: transform 160ms ease, box-shadow 160ms ease;
+        }
+        .theme-toggle:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 22px rgba(15,23,42,0.12);
+        }
+        .enroll-theme-dark .theme-toggle {
+          background: rgba(30,41,59,0.8);
+          border-color: rgba(148,163,184,0.3);
+          color: #e2e8f0;
+        }
+      `}</style>
     </>
   );
 }
