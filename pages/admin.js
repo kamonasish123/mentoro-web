@@ -49,6 +49,10 @@ export default function AdminPage() {
   const [profile, setProfile] = useState(null); // current admin's profile (with role)
   const [currentUser, setCurrentUser] = useState(null); // auth user (has email)
   const [courses, setCourses] = useState([]);
+  const [coursesPage, setCoursesPage] = useState(1);
+  const [coursesPageSize, setCoursesPageSize] = useState(10);
+  const [courseSearch, setCourseSearch] = useState("");
+  const [courseTopicFilter, setCourseTopicFilter] = useState("all");
   const [problems, setProblems] = useState([]);
   const [problemsPage, setProblemsPage] = useState(1);
   const [problemsPageSize, setProblemsPageSize] = useState(20);
@@ -137,6 +141,37 @@ export default function AdminPage() {
 
   // derived roles available for operator (keeps stable)
   const rolesForFilter = useMemo(() => ["all", ...ALL_ROLES], []);
+
+  const uniqueCourseTopics = useMemo(() => {
+    const set = new Set();
+    courses.forEach(c => {
+      (Array.isArray(c.topics) ? c.topics : []).forEach(t => {
+        if (t) set.add(String(t));
+      });
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [courses]);
+
+  const filteredCourses = useMemo(() => {
+    let list = courses.slice();
+    const q = courseSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter(c => {
+        const title = (c.title || "").toLowerCase();
+        const desc = (c.description || "").toLowerCase();
+        const topics = (Array.isArray(c.topics) ? c.topics.join(" ") : "").toLowerCase();
+        return title.includes(q) || desc.includes(q) || topics.includes(q);
+      });
+    }
+    if (courseTopicFilter !== "all") {
+      list = list.filter(c => Array.isArray(c.topics) && c.topics.some(t => String(t).toLowerCase() === courseTopicFilter.toLowerCase()));
+    }
+    return list;
+  }, [courses, courseSearch, courseTopicFilter]);
+
+  const coursesPagesCount = Math.max(1, Math.ceil(filteredCourses.length / coursesPageSize));
+  const coursePageStart = (coursesPage - 1) * coursesPageSize;
+  const visibleCourses = filteredCourses.slice(coursePageStart, coursePageStart + coursesPageSize);
 
   useEffect(() => {
     (async () => {
@@ -1340,21 +1375,33 @@ async function removeUser(uId) {
       </Head>
 
       <main
-        className="min-h-screen p-6"
+        className="min-h-screen p-6 admin-root"
         style={{
           background: "#071029",
           backgroundImage: "linear-gradient(rgba(0,210,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,210,255,0.03) 1px, transparent 1px)",
           backgroundSize: "50px 50px"
         }}
       >
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto admin-shell">
           {/* header: centered title, back button on right */}
-          <header style={{ position: "relative", marginBottom: 18 }}>
-            <h1 style={{ textAlign: "center", color: "white", fontSize: 26, margin: 0, fontWeight: 800 }}>Admin Dashboard</h1>
-            <div style={{ position: "absolute", right: 0, top: 0 }}>
+          <header className="admin-header">
+            <h1 className="admin-title">Admin Dashboard</h1>
+            <div className="admin-header-action">
               <Link href="/" className="btn back-btn">Back to homepage</Link>
             </div>
           </header>
+
+          <nav className="admin-nav" aria-label="Admin features">
+            <a className="admin-nav-link" href="#create-course">Create Course</a>
+            <a className="admin-nav-link" href="#add-problem">Add Problem</a>
+            <a className="admin-nav-link" href="#assign-user">Assign User</a>
+            <a className="admin-nav-link" href="#quick-stats">Quick Stats</a>
+            <a className="admin-nav-link" href="#featured-projects">Featured Projects</a>
+            <a className="admin-nav-link" href="#courses">Courses</a>
+            <a className="admin-nav-link" href="#users">Users</a>
+            <a className="admin-nav-link" href="#problems">Problems</a>
+            <a className="admin-nav-link" href="#course-problems">Course‑wise Problems</a>
+          </nav>
 
           {/* status */}
           {actionMsg && (
@@ -1368,9 +1415,9 @@ async function removeUser(uId) {
             </div>
           )}
 
-          <section className="grid md:grid-cols-2 gap-6 mb-6">
+          <section className="grid md:grid-cols-2 gap-6 mb-6 admin-section">
 
-            <div className="card p-4 hover-card">
+            <div className="card p-4 hover-card" id="create-course">
               <h3 className="card-title">{editingCourseId ? "Edit Course" : "Create Course"}</h3>
               <form onSubmit={createOrUpdateCourse} className="space-y-3">
                 <input value={courseTitle} onChange={e => setCourseTitle(e.target.value)} placeholder="Course title" className="w-full p-2 field" />
@@ -1436,7 +1483,7 @@ async function removeUser(uId) {
               </form>
             </div>
 
-            <div className="card p-4 hover-card" id="problem-form">
+            <div className="card p-4 hover-card" id="add-problem">
               <h3 className="card-title">{editingProblemId ? "Edit Problem" : "Add Problem"}</h3>
               <form onSubmit={addProblem} className="space-y-3">
                 <input value={probTitle} onChange={e => setProbTitle(e.target.value)} placeholder="Problem title" className="w-full p-2 field" />
@@ -1539,8 +1586,8 @@ async function removeUser(uId) {
 
           </section>
 
-          <section className="grid md:grid-cols-3 gap-6 mb-6">
-            <div className="card p-4 hover-card">
+          <section className="grid md:grid-cols-3 gap-6 mb-6 admin-section">
+            <div className="card p-4 hover-card" id="assign-user">
               <h3 className="card-title">Assign User</h3>
               <form onSubmit={assignUser} className="space-y-3">
                 <select className="w-full p-2 field" value={assignUserId} onChange={e => setAssignUserId(e.target.value)}>
@@ -1558,7 +1605,7 @@ async function removeUser(uId) {
             </div>
 
             {/* NOTE: Set-by-email removed — inline user list handles role changes now */}
-            <div className="card p-4 hover-card">
+            <div className="card p-4 hover-card" id="quick-stats">
               <h3 className="card-title">Quick Stats</h3>
               <div className="quick-stats">
                 <div className="quick-stat">
@@ -1583,7 +1630,7 @@ async function removeUser(uId) {
 
           {/* ---------- FEATURED PROJECTS SECTION (NEW) ---------- */}
           {isSuperAdmin ? (
-            <section className="mb-6">
+            <section className="mb-6 admin-section" id="featured-projects">
               <h3 className="centered-h">Featured Projects (manage order & pagination)</h3>
 
               <div className="card p-3" style={{ marginBottom: 12 }}>
@@ -1693,10 +1740,40 @@ async function removeUser(uId) {
           {/* ---------- END FEATURED PROJECTS SECTION ---------- */}
 
           {/* COURSES (with full edit/delete) */}
-          <section className="mb-6">
+          <section className="mb-6 admin-section" id="courses">
             <h3 className="centered-h">Courses</h3>
+
+            <div className="courses-toolbar">
+              <div className="courses-filters">
+                <input
+                  className="p-2 field"
+                  placeholder="Search by title or topic..."
+                  value={courseSearch}
+                  onChange={(e) => { setCourseSearch(e.target.value); setCoursesPage(1); }}
+                />
+                <select
+                  className="p-2 field"
+                  value={courseTopicFilter}
+                  onChange={(e) => { setCourseTopicFilter(e.target.value); setCoursesPage(1); }}
+                >
+                  <option value="all">All topics</option>
+                  {uniqueCourseTopics.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select
+                  className="p-2 field"
+                  value={coursesPageSize}
+                  onChange={(e) => { setCoursesPageSize(Number(e.target.value)); setCoursesPage(1); }}
+                >
+                  {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+              </div>
+              <div className="courses-count">
+                Showing {filteredCourses.length} courses
+              </div>
+            </div>
+
             <div className="space-y-3">
-              {courses.map(c => {
+              {visibleCourses.map(c => {
                 const editing = editingTopicsMap[c.id]?.editing;
                 const editor = editingTopicsMap[c.id] || { topics: Array.isArray(c.topics) ? [...c.topics] : [], input: "" };
                 return (
@@ -1773,10 +1850,22 @@ async function removeUser(uId) {
                 );
               })}
             </div>
+
+            <div className="courses-pagination">
+              <div className="muted-2">
+                Page {coursesPage} / {coursesPagesCount}
+              </div>
+              <div className="courses-page-actions">
+                <button className="btn" onClick={() => setCoursesPage(1)} disabled={coursesPage <= 1}>« First</button>
+                <button className="btn" onClick={() => setCoursesPage(p => Math.max(1, p - 1))} disabled={coursesPage <= 1}>‹ Prev</button>
+                <button className="btn" onClick={() => setCoursesPage(p => Math.min(coursesPagesCount, p + 1))} disabled={coursesPage >= coursesPagesCount}>Next ›</button>
+                <button className="btn" onClick={() => setCoursesPage(coursesPagesCount)} disabled={coursesPage >= coursesPagesCount}>Last »</button>
+              </div>
+            </div>
           </section>
 
           {/* USERS LIST (role management) */}
-          <section className="mb-6">
+          <section className="mb-6 admin-section" id="users">
             <h3 className="centered-h">Users (set role inline)</h3>
 
             {/* Search & filters */}
@@ -1932,7 +2021,7 @@ async function removeUser(uId) {
           </section>
 
           {/* COURSE-WISE PROBLEM LIST */}
-          <section style={{ marginBottom: 40 }}>
+          <section className="admin-section" style={{ marginBottom: 40 }} id="course-problems">
             <h3 className="centered-h">Course Problem List</h3>
             <div className="card p-4 hover-card">
               <div className="course-problem-toolbar">
@@ -2025,7 +2114,7 @@ async function removeUser(uId) {
           </section>
 
           {/* EXISTING PROBLEMS */}
-          <section style={{ marginBottom: 40 }}>
+          <section className="admin-section" style={{ marginBottom: 40 }} id="problems">
             <h3 className="centered-h">Existing Problems</h3>
             <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -2153,14 +2242,116 @@ async function removeUser(uId) {
           --muted-2: rgba(255,255,255,0.6);
         }
 
-        /* global-ish */
-        .card { background: rgba(255,255,255,0.02); border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); padding: 16px; }
-        .hover-card { transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease; }
-        .hover-card:hover { transform: translateY(-4px); background: rgba(0,210,255,0.06); box-shadow: 0 12px 40px rgba(0,210,255,0.08); }
+        .admin-root { color: #e6f7ff; }
+        .admin-header {
+          position: relative;
+          margin-bottom: 22px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .admin-title {
+          margin: 0;
+          font-size: 28px;
+          font-weight: 800;
+          color: #e6f7ff;
+          letter-spacing: 0.4px;
+        }
+        .admin-header-action {
+          position: absolute;
+          right: 0;
+          top: 0;
+        }
+        .admin-nav {
+          position: sticky;
+          top: 10px;
+          z-index: 50;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          justify-content: center;
+          padding: 10px 12px;
+          border-radius: 16px;
+          background: rgba(10, 16, 36, 0.8);
+          border: 1px solid rgba(0,210,255,0.16);
+          box-shadow: 0 16px 40px rgba(2,6,23,0.6);
+          backdrop-filter: blur(14px);
+          margin-bottom: 18px;
+        }
+        .admin-nav-link {
+          padding: 6px 12px;
+          border-radius: 999px;
+          color: #c7f6ff;
+          font-weight: 700;
+          font-size: 12px;
+          text-decoration: none;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+          transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, color 180ms ease;
+        }
+        .admin-nav-link:hover {
+          transform: translateY(-2px);
+          background: rgba(0,210,255,0.18);
+          border-color: rgba(0,210,255,0.35);
+          color: #0b172a;
+          box-shadow: 0 10px 30px rgba(0,210,255,0.14);
+        }
+        .admin-section { scroll-margin-top: 90px; }
+        .courses-toolbar {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          margin-bottom: 12px;
+        }
+        .courses-filters {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .courses-count {
+          color: var(--muted-2);
+          font-size: 12px;
+        }
+        .courses-pagination {
+          margin-top: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .courses-page-actions { display: flex; gap: 8px; }
 
-        .card-title { text-align: center; color: white; margin-bottom: 12px; font-size: 16px; font-weight: 700; }
+        /* global-ish */
+        .card {
+          background:
+            radial-gradient(900px 180px at 10% -20%, rgba(0, 210, 255, 0.08), transparent 60%),
+            linear-gradient(140deg, rgba(12, 18, 38, 0.96), rgba(7, 10, 24, 0.98));
+          border-radius: 16px;
+          border: 1px solid rgba(0,210,255,0.12);
+          padding: 16px;
+          box-shadow: 0 18px 44px rgba(2,6,23,0.55);
+          backdrop-filter: blur(10px);
+        }
+        .hover-card { transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, border-color 180ms ease; }
+        .hover-card:hover { transform: translateY(-4px); border-color: rgba(0,210,255,0.35); box-shadow: 0 22px 52px rgba(0,210,255,0.14); }
+
+        .card-title {
+          text-align: left;
+          color: #c7f6ff;
+          margin: 0 0 12px;
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
+          padding-bottom: 8px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
         .quick-stats { display: grid; gap: 10px; text-align: left; }
-        .quick-stat { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); color: #e6f7ff; font-weight: 600; }
+        .quick-stat { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #e6f7ff; font-weight: 600; }
         .quick-stat span { color: var(--muted-2); font-weight: 600; }
         .quick-stat strong { color: #ffffff; font-size: 16px; }
         .quick-stat-note { margin-top: 10px; font-size: 12px; color: #22c55e; text-align: center; display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap: wrap; }
@@ -2177,7 +2368,7 @@ async function removeUser(uId) {
         .multi-course-item:hover { background: rgba(0,210,255,0.08); }
         .multi-course-item input { accent-color: #00d2ff; }
         .multi-course-hint { font-size: 12px; color: var(--muted-2); }
-        .section-notice { margin: 6px 0 12px; padding: 8px 10px; border-radius: 8px; font-size: 12px; border: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.02); color: rgba(255,255,255,0.9); }
+        .section-notice { margin: 6px 0 12px; padding: 8px 10px; border-radius: 10px; font-size: 12px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.9); }
         .section-notice.error { background: rgba(244,63,94,0.12); border-color: rgba(244,63,94,0.25); color: #fecaca; }
         .section-notice.success { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.25); color: #bbf7d0; }
         .section-notice.warning { background: rgba(234,179,8,0.12); border-color: rgba(234,179,8,0.25); color: #fde68a; }
@@ -2195,10 +2386,10 @@ async function removeUser(uId) {
         /* header back button */
         .back-btn {
           padding: 8px 12px;
-          border-radius: 8px;
-          background: rgba(255,255,255,0.03);
-          color: white;
-          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 10px;
+          background: rgba(0,210,255,0.08);
+          color: #bff6ff;
+          border: 1px solid rgba(0,210,255,0.2);
           cursor: pointer;
           font-weight: 700;
           text-decoration: none;
@@ -2207,18 +2398,24 @@ async function removeUser(uId) {
         .back-btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,210,255,0.06); border-color: rgba(0,210,255,0.18); background: rgba(0,210,255,0.06); color: #002; }
 
         /* buttons */
-        .btn { padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,0.03); color: white; border: 1px solid rgba(255,255,255,0.06); cursor: pointer; font-weight: 700; }
+        .btn { padding: 8px 12px; border-radius: 10px; background: rgba(255,255,255,0.04); color: #e6f7ff; border: 1px solid rgba(255,255,255,0.08); cursor: pointer; font-weight: 700; }
         .btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,210,255,0.06); border-color: rgba(0,210,255,0.18); }
-        .btn-cyan { background: rgba(0,210,255,0.06); color: #002; border: 1px solid rgba(0,210,255,0.18); }
+        .btn-cyan { background: rgba(0,210,255,0.12); color: #0b172a; border: 1px solid rgba(0,210,255,0.35); }
         .view-btn { padding: 8px 10px; background: rgba(255,255,255,0.02); color: white; border: 1px solid rgba(255,255,255,0.04); }
 
         /* make inputs/selects readable */
         .field {
-          color: #001;
-          background: #f8fafc;
-          border: 1px solid rgba(2,6,23,0.06);
-          border-radius: 8px;
-          padding: 8px;
+          color: #e6f7ff;
+          background: rgba(8,16,36,0.9);
+          border: 1px solid rgba(0,210,255,0.18);
+          border-radius: 10px;
+          padding: 9px 10px;
+          outline: none;
+          transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .field:focus {
+          border-color: rgba(0,210,255,0.45);
+          box-shadow: 0 0 0 4px rgba(0,210,255,0.12);
         }
 
         /* user row / problem row styling */

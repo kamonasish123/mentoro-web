@@ -2460,6 +2460,7 @@ input.p-2.field {
   gap: 10px;
   margin-top: 6px;
 }
+.blog-like-btn { width: fit-content; }
 .blog-like-btn {
   padding: 8px 12px !important;
   border-radius: 999px !important;
@@ -2496,6 +2497,7 @@ input.p-2.field {
   .blog-thumb { height: 160px; }
   .blog-body { padding: 14px; }
   .blog-actions { flex-direction: column; align-items: stretch; }
+  .blog-like-btn { align-self: flex-start; width: fit-content; }
   .blog-read-btn { width: 100%; justify-content: center; }
 }
 

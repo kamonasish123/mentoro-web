@@ -1313,6 +1313,15 @@ export default function EnrollPage() {
     setRandomPickId(null);
   }
 
+  function getPlatformClass(platform) {
+    const v = String(platform || "").toLowerCase();
+    if (v.includes("codeforces") || v === "cf") return "platform-cf";
+    if (v.includes("serious") || v.includes("soj")) return "platform-soj";
+    if (v.includes("atcoder")) return "platform-atcoder";
+    if (v.includes("codechef")) return "platform-codechef";
+    return "platform-other";
+  }
+
 
   return (
     <>
@@ -1494,8 +1503,8 @@ export default function EnrollPage() {
                         className="group grid grid-cols-1 md:grid-cols-7 gap-4 items-center bg-white rounded-xl p-4 border border-slate-200 shadow-sm hover:shadow-md transition problem-row"
                       >
                       <div className="md:col-span-2">
-                        <div className="font-semibold">{p.title}</div>
-                        <div className="text-sm text-slate-500">{p.platform}</div>
+                        <div className="problem-title">{p.title}</div>
+                        <div className={`problem-platform ${getPlatformClass(p.platform)}`}>{p.platform}</div>
                       </div>
 
                       {/* solved/attempted */}
@@ -1511,9 +1520,9 @@ export default function EnrollPage() {
                         <DifficultyBadge level={p.difficulty || "easy"} />
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 status-cell">
                         {status[p.id] === "solved" ? (
-                          <span className="text-emerald-600 font-medium">Solved ✓</span>
+                          <span className="status-solved">Solved ✓</span>
                         ) : status[p.id] === "attempted" ? (
                           <div className="relative">
                             <span className="pointer-events-none absolute -top-2 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-slate-200 bg-slate-900/90 px-2 py-1 text-[11px] font-medium text-white shadow-sm group-hover:block">
@@ -1521,7 +1530,7 @@ export default function EnrollPage() {
                             </span>
                             <button
                               onClick={() => handleMarkSolvedClick(p)}
-                              className="inline-block px-4 py-1.5 rounded-lg bg-amber-100 text-amber-700 font-medium hover:opacity-90 transition"
+                              className="btn-attempted"
                             >
                               Attempted
                             </button>
@@ -1529,7 +1538,7 @@ export default function EnrollPage() {
                         ) : (
                           <button
                             onClick={() => handleAttempt(p)}
-                            className="px-4 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition"
+                            className="btn-attempt"
                           >
                             Attempt
                           </button>
@@ -1542,11 +1551,7 @@ export default function EnrollPage() {
                           title={likeTitle}
                           onClick={() => handleVote(p.id, "like")}
                           disabled={disabledVote}
-                          className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
-                            voted === "like"
-                              ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                          } ${disabledVote ? "cursor-not-allowed opacity-60" : ""}`}
+                          className={`btn-vote btn-like ${voted === "like" ? "active" : ""} ${disabledVote ? "is-disabled" : ""}`}
                         >
                           <span aria-hidden="true">&#128077;</span>
                           <span>{counts.like}</span>
@@ -1556,22 +1561,18 @@ export default function EnrollPage() {
                           title={dislikeTitle}
                           onClick={() => handleVote(p.id, "dislike")}
                           disabled={disabledVote}
-                          className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
-                            voted === "dislike"
-                              ? "border-rose-500 bg-rose-50 text-rose-700"
-                              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                          } ${disabledVote ? "cursor-not-allowed opacity-60" : ""}`}
+                          className={`btn-vote btn-dislike ${voted === "dislike" ? "active" : ""} ${disabledVote ? "is-disabled" : ""}`}
                         >
                           <span aria-hidden="true">&#128078;</span>
                           <span>{counts.dislike}</span>
                         </button>
                       </div>
 
-                      <div className="flex justify-end">
+                      <div className="flex justify-end solution-cell">
                         {solutionUnlocked[p.id] ? (
                           <button
                             onClick={() => handleViewSolution(p)}
-                            className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-medium shadow-sm hover:opacity-90 transition"
+                            className="btn-solution"
                           >
                             View Solution
                           </button>
@@ -1731,27 +1732,32 @@ export default function EnrollPage() {
         }
         .enroll-theme-dark .problems-card,
         .enroll-theme-dark .ranklist-card {
-          background: rgba(15,23,42,0.92);
-          border: 1px solid rgba(148,163,184,0.18);
-          box-shadow: 0 18px 40px rgba(2,6,23,0.6);
+          background: linear-gradient(180deg, rgba(14,20,40,0.96), rgba(8,12,26,0.98));
+          border: 1px solid rgba(59,130,246,0.22);
+          box-shadow: 0 28px 60px rgba(2,6,23,0.7);
         }
         .enroll-theme-light .problems-card,
         .enroll-theme-light .ranklist-card {
-          background: rgba(255,255,255,0.92);
-          border: 1px solid rgba(226,232,240,1);
-          box-shadow: 0 18px 40px rgba(15,23,42,0.1);
-          border-radius: 16px;
-          padding: 24px;
+          background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.98));
+          border: 1px solid rgba(226,232,240,0.9);
+          box-shadow: 0 20px 44px rgba(15,23,42,0.12);
+          border-radius: 18px;
+          padding: 26px;
         }
-        .problems-card {
-          border-radius: 16px;
-          padding: 24px;
-          backdrop-filter: blur(10px);
-        }
+        .problems-card,
         .ranklist-card {
-          border-radius: 16px;
-          padding: 24px;
-          backdrop-filter: blur(10px);
+          border-radius: 18px;
+          padding: 26px;
+          backdrop-filter: blur(12px);
+          position: relative;
+        }
+        .course-header {
+          padding-bottom: 12px;
+          margin-bottom: 14px;
+          border-bottom: 1px solid rgba(148,163,184,0.25);
+        }
+        .enroll-theme-dark .course-header {
+          border-bottom-color: rgba(148,163,184,0.2);
         }
         .enroll-theme-dark .course-header h1,
         .enroll-theme-dark .course-header p,
@@ -1761,9 +1767,20 @@ export default function EnrollPage() {
         .enroll-theme-dark .course-header .text-slate-500 {
           color: #94a3b8;
         }
+        .progress-card {
+          border-radius: 14px;
+          border: 1px solid rgba(15,23,42,0.1);
+          box-shadow: 0 12px 26px rgba(15,23,42,0.08);
+          transition: transform 180ms ease, box-shadow 180ms ease;
+        }
+        .progress-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 18px 30px rgba(15,23,42,0.12);
+        }
         .enroll-theme-dark .progress-card {
-          background: rgba(15,23,42,0.6) !important;
-          border-color: rgba(148,163,184,0.2) !important;
+          background: rgba(15,23,42,0.72) !important;
+          border-color: rgba(148,163,184,0.28) !important;
+          box-shadow: 0 16px 32px rgba(2,6,23,0.6);
         }
         .enroll-theme-dark .progress-card .text-slate-900 {
           color: #ffffff !important;
@@ -1771,9 +1788,14 @@ export default function EnrollPage() {
         .enroll-theme-dark .progress-card .text-slate-500 {
           color: #94a3b8 !important;
         }
+        .filter-bar {
+          border-radius: 14px !important;
+          box-shadow: 0 12px 28px rgba(15,23,42,0.08);
+        }
         .enroll-theme-dark .filter-bar {
-          background: rgba(15,23,42,0.7) !important;
-          border-color: rgba(148,163,184,0.2) !important;
+          background: rgba(15,23,42,0.75) !important;
+          border-color: rgba(148,163,184,0.28) !important;
+          box-shadow: 0 14px 30px rgba(2,6,23,0.6);
         }
         .enroll-theme-dark .filter-bar select,
         .enroll-theme-dark .filter-bar button,
@@ -1800,12 +1822,27 @@ export default function EnrollPage() {
         .enroll-theme-dark .problem-header {
           color: #94a3b8 !important;
         }
+        .problem-row {
+          border-radius: 14px !important;
+          box-shadow: 0 10px 22px rgba(15,23,42,0.08);
+        }
         .enroll-theme-dark .problem-row {
-          background: rgba(15,23,42,0.7) !important;
-          border-color: rgba(148,163,184,0.2) !important;
+          background: rgba(15,23,42,0.74) !important;
+          border-color: rgba(148,163,184,0.28) !important;
+          box-shadow: 0 14px 30px rgba(2,6,23,0.55);
         }
         .enroll-theme-dark .problem-row:hover {
-          background: rgba(30,41,59,0.8) !important;
+          background: rgba(30,41,59,0.86) !important;
+        }
+        .enroll-theme-light .problem-row {
+          background: rgba(255,255,255,0.96) !important;
+          border-color: rgba(148,163,184,0.25) !important;
+          box-shadow: 0 10px 22px rgba(15,23,42,0.08);
+        }
+        .enroll-theme-light .problem-row:hover {
+          background: rgba(248,250,252,0.98) !important;
+          border-color: rgba(59,130,246,0.25) !important;
+          box-shadow: 0 14px 26px rgba(15,23,42,0.14);
         }
         .enroll-theme-dark .showing-text {
           color: #e2e8f0 !important;
@@ -1822,9 +1859,14 @@ export default function EnrollPage() {
         .enroll-theme-dark .ranklist-card .text-slate-400 {
           color: #94a3b8 !important;
         }
+        .ranklist-row {
+          border-radius: 12px !important;
+          box-shadow: 0 10px 22px rgba(15,23,42,0.08);
+        }
         .enroll-theme-dark .ranklist-row {
-          background: rgba(15,23,42,0.7) !important;
-          border-color: rgba(148,163,184,0.25) !important;
+          background: rgba(15,23,42,0.74) !important;
+          border-color: rgba(148,163,184,0.3) !important;
+          box-shadow: 0 14px 30px rgba(2,6,23,0.55);
         }
         .ranklist-num-badge {
           display: inline-flex;
@@ -1916,6 +1958,362 @@ export default function EnrollPage() {
           border-color: rgba(148,163,184,0.3);
           color: #e2e8f0;
         }
+
+        /* Pro difficulty badges */
+        :global(.difficulty-badge) {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 6px 12px;
+          border-radius: 999px;
+          font-size: 0.72rem;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          border: 1px solid transparent;
+          box-shadow: 0 10px 22px rgba(15,23,42,0.12);
+          white-space: nowrap;
+        }
+        :global(.difficulty-easy) {
+          background: linear-gradient(135deg, rgba(16,185,129,0.22), rgba(52,211,153,0.16));
+          color: #065f46;
+          border-color: rgba(16,185,129,0.45);
+        }
+        :global(.difficulty-medium) {
+          background: linear-gradient(135deg, rgba(245,158,11,0.2), rgba(251,191,36,0.18));
+          color: #92400e;
+          border-color: rgba(245,158,11,0.45);
+        }
+        :global(.difficulty-hard) {
+          background: linear-gradient(135deg, rgba(244,63,94,0.18), rgba(251,113,133,0.16));
+          color: #9f1239;
+          border-color: rgba(244,63,94,0.45);
+        }
+        .enroll-theme-dark :global(.difficulty-badge) {
+          box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+        }
+        .enroll-theme-dark :global(.difficulty-easy) {
+          background: linear-gradient(135deg, rgba(16,185,129,0.28), rgba(52,211,153,0.2));
+          color: #ecfdf3;
+          border-color: rgba(16,185,129,0.55);
+        }
+        .enroll-theme-dark :global(.difficulty-medium) {
+          background: linear-gradient(135deg, rgba(245,158,11,0.26), rgba(251,191,36,0.2));
+          color: #fff7ed;
+          border-color: rgba(245,158,11,0.55);
+        }
+        .enroll-theme-dark :global(.difficulty-hard) {
+          background: linear-gradient(135deg, rgba(244,63,94,0.24), rgba(251,113,133,0.2));
+          color: #fff1f2;
+          border-color: rgba(244,63,94,0.55);
+        }
+
+        .btn-attempt {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 8px 16px;
+          border-radius: 12px;
+          font-weight: 800;
+          font-size: 0.85rem;
+          letter-spacing: 0.04em;
+          background: linear-gradient(90deg, #0f766e, #06b6d4);
+          color: #ffffff;
+          border: 1px solid rgba(6,182,212,0.4);
+          box-shadow: 0 12px 24px rgba(6,182,212,0.2);
+          transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+        }
+        .btn-attempt:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 16px 28px rgba(6,182,212,0.28);
+        }
+        .btn-attempted {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 7px 14px;
+          border-radius: 12px;
+          font-weight: 800;
+          font-size: 0.78rem;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          background: linear-gradient(135deg, rgba(251,191,36,0.25), rgba(245,158,11,0.2));
+          color: #92400e;
+          border: 1px solid rgba(245,158,11,0.5);
+          box-shadow: 0 10px 22px rgba(245,158,11,0.2);
+          transition: transform 160ms ease, box-shadow 160ms ease;
+        }
+        .btn-attempted:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 14px 26px rgba(245,158,11,0.26);
+        }
+        .status-solved {
+          display: inline-flex;
+          align-items: center;
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: rgba(16,185,129,0.16);
+          color: #065f46;
+          border: 1px solid rgba(16,185,129,0.45);
+          font-weight: 800;
+          font-size: 0.8rem;
+          letter-spacing: 0.04em;
+        }
+        .btn-solution {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 8px 14px;
+          border-radius: 12px;
+          font-weight: 700;
+          font-size: 0.85rem;
+          background: rgba(15,23,42,0.85);
+          color: #e2e8f0;
+          border: 1px solid rgba(148,163,184,0.4);
+          box-shadow: 0 10px 22px rgba(15,23,42,0.18);
+          transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+        }
+        .btn-solution:hover {
+          transform: translateY(-2px);
+          background: rgba(30,41,59,0.9);
+          box-shadow: 0 14px 26px rgba(15,23,42,0.26);
+        }
+        .enroll-theme-dark .btn-attempted {
+          color: #fff7ed;
+          border-color: rgba(245,158,11,0.55);
+        }
+        .enroll-theme-dark .status-solved {
+          color: #ecfdf3;
+          border-color: rgba(16,185,129,0.6);
+        }
+        .enroll-theme-dark .btn-solution {
+          background: rgba(15,23,42,0.7);
+          border-color: rgba(148,163,184,0.35);
+          color: #e2e8f0;
+        }
+        .btn-vote {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 10px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          border: 1px solid rgba(148,163,184,0.25);
+          background: rgba(255,255,255,0.9);
+          color: #0f172a;
+          box-shadow: 0 8px 18px rgba(15,23,42,0.08);
+          transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease, color 160ms ease;
+        }
+        .btn-vote:not(.is-disabled):hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 22px rgba(15,23,42,0.12);
+        }
+        .btn-like.active {
+          background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(52,211,153,0.16));
+          border-color: rgba(16,185,129,0.5);
+          color: #065f46;
+        }
+        .btn-dislike.active {
+          background: linear-gradient(135deg, rgba(244,63,94,0.2), rgba(251,113,133,0.18));
+          border-color: rgba(244,63,94,0.5);
+          color: #9f1239;
+        }
+        .btn-vote.is-disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+          box-shadow: none;
+        }
+        .enroll-theme-dark .btn-vote {
+          background: rgba(15,23,42,0.7);
+          color: #e2e8f0;
+          border-color: rgba(148,163,184,0.35);
+          box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+        }
+        .enroll-theme-dark .btn-like.active {
+          color: #ecfdf3;
+          border-color: rgba(16,185,129,0.6);
+        }
+        .enroll-theme-dark .btn-dislike.active {
+          color: #fff1f2;
+          border-color: rgba(244,63,94,0.6);
+        }
+
+        .problem-title {
+          font-size: 1rem;
+          font-weight: 800;
+          color: #0f172a;
+          letter-spacing: 0.01em;
+        }
+        .problem-platform {
+          margin-top: 4px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 999px;
+          font-size: 0.74rem;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #0f172a;
+          background: rgba(0, 210, 255, 0.14);
+          border: 1px solid rgba(0, 210, 255, 0.35);
+        }
+        .enroll-theme-dark .problem-title {
+          color: #e2e8f0;
+        }
+        .enroll-theme-dark .problem-platform {
+          color: #e2e8f0;
+          background: rgba(15,23,42,0.7);
+          border-color: rgba(148,163,184,0.35);
+        }
+        .problem-platform.platform-cf {
+          background: rgba(59,130,246,0.18);
+          border-color: rgba(59,130,246,0.5);
+          color: #1e3a8a;
+        }
+        .problem-platform.platform-soj {
+          background: rgba(16,185,129,0.2);
+          border-color: rgba(16,185,129,0.5);
+          color: #065f46;
+        }
+        .problem-platform.platform-atcoder {
+          background: rgba(168,85,247,0.18);
+          border-color: rgba(168,85,247,0.5);
+          color: #5b21b6;
+        }
+        .problem-platform.platform-codechef {
+          background: rgba(245,158,11,0.2);
+          border-color: rgba(245,158,11,0.55);
+          color: #92400e;
+        }
+        .problem-platform.platform-other {
+          background: rgba(148,163,184,0.2);
+          border-color: rgba(148,163,184,0.45);
+          color: #334155;
+        }
+        .enroll-theme-dark .problem-platform.platform-cf {
+          background: rgba(59,130,246,0.2);
+          border-color: rgba(59,130,246,0.5);
+          color: #dbeafe;
+        }
+        .enroll-theme-dark .problem-platform.platform-soj {
+          background: rgba(16,185,129,0.22);
+          border-color: rgba(16,185,129,0.55);
+          color: #ecfdf3;
+        }
+        .enroll-theme-dark .problem-platform.platform-atcoder {
+          background: rgba(168,85,247,0.22);
+          border-color: rgba(168,85,247,0.55);
+          color: #ede9fe;
+        }
+        .enroll-theme-dark .problem-platform.platform-codechef {
+          background: rgba(245,158,11,0.24);
+          border-color: rgba(245,158,11,0.6);
+          color: #fff7ed;
+        }
+        .enroll-theme-dark .problem-platform.platform-other {
+          background: rgba(148,163,184,0.22);
+          border-color: rgba(148,163,184,0.5);
+          color: #e2e8f0;
+        }
+
+        /* Responsive refinements */
+        @media (max-width: 1024px) {
+          .problems-card,
+          .ranklist-card {
+            padding: 20px;
+          }
+          .course-header {
+            flex-direction: column;
+            gap: 12px;
+          }
+        }
+        @media (max-width: 768px) {
+          .problems-card,
+          .ranklist-card {
+            padding: 16px;
+          }
+          .course-header h1 {
+            font-size: 1.6rem;
+          }
+          .filter-bar {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .filter-bar .pick-random-btn {
+            width: 100%;
+            justify-content: center;
+          }
+          .status-cell,
+          .solution-cell {
+            justify-content: flex-start;
+          }
+          .solution-cell .btn-solution {
+            width: 100%;
+          }
+        }
+        @media (max-width: 640px) {
+          .problem-header { display: none; }
+          .problem-row {
+            display: flex !important;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
+          }
+          .problem-row > div {
+            width: 100%;
+          }
+          .problem-row > div:nth-child(2),
+          .problem-row > div:nth-child(3),
+          .problem-row > div:nth-child(4),
+          .problem-row > div:nth-child(5),
+          .problem-row > div:nth-child(6) {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+          }
+          .problem-row > div:nth-child(2)::before {
+            content: "Solved / Attempted";
+          }
+          .problem-row > div:nth-child(3)::before {
+            content: "Difficulty";
+          }
+          .problem-row > div:nth-child(4)::before {
+            content: "Status";
+          }
+          .problem-row > div:nth-child(5)::before {
+            content: "Like / Dislike";
+          }
+          .problem-row > div:nth-child(6)::before {
+            content: "Solution";
+          }
+          .problem-row > div:nth-child(2)::before,
+          .problem-row > div:nth-child(3)::before,
+          .problem-row > div:nth-child(4)::before,
+          .problem-row > div:nth-child(5)::before,
+          .problem-row > div:nth-child(6)::before {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #94a3b8;
+            min-width: 140px;
+          }
+          .enroll-theme-dark .problem-row > div:nth-child(2)::before,
+          .enroll-theme-dark .problem-row > div:nth-child(3)::before,
+          .enroll-theme-dark .problem-row > div:nth-child(4)::before,
+          .enroll-theme-dark .problem-row > div:nth-child(5)::before,
+          .enroll-theme-dark .problem-row > div:nth-child(6)::before {
+            color: #94a3b8;
+          }
+          .status-cell,
+          .solution-cell {
+            justify-content: flex-start;
+          }
+        }
       `}</style>
     </>
   );
@@ -1924,14 +2322,11 @@ export default function EnrollPage() {
 function DifficultyBadge({ level }) {
   // normalize level and show capitalized label
   const norm = (level || "easy").toString().toLowerCase();
-  const map = {
-    easy: "bg-emerald-100 text-emerald-700",
-    medium: "bg-amber-100 text-amber-700",
-    hard: "bg-rose-100 text-rose-700",
-  };
-  const cls = map[norm] || map["easy"];
+  const tone = (norm === "easy" || norm === "medium" || norm === "hard") ? norm : "easy";
   const label = norm.charAt(0).toUpperCase() + norm.slice(1);
   return (
-    <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${cls}`}>{label}</span>
+    <span className={`difficulty-badge difficulty-${tone}`}>{label}</span>
   );
 }
+
+
